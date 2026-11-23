@@ -160,6 +160,12 @@ struct VideoMenu: View {
             if let id = video.channelId {
                 Button { AppState.shared.push(.channel(id: id, name: video.channel)) } label: { Label("Go to channel", systemImage: "person.crop.square") }
             }
+            if let id = video.channelId ?? (video.channel.isEmpty ? nil : video.channel) {
+                Button(role: .destructive) {
+                    AppSettings.shared.blockChannel(Channel(id: id, name: video.channel, avatar: video.channelAvatar))
+                    PlayerModel.shared.showToast("You won't see \(video.channel.isEmpty ? "this channel" : video.channel) again")
+                } label: { Label("Don't recommend channel", systemImage: "nosign") }
+            }
             if let onRemove {
                 Button(role: .destructive, action: onRemove) { Label("Remove", systemImage: "trash") }
             }

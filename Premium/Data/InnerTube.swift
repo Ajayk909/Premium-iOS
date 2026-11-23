@@ -100,6 +100,37 @@ final class InnerTube {
         return Array(list.prefix(10))
     }
 
+    // MARK: Captions
+
+    func captionTracks(_ id: String) async -> [CaptionTrack] {
+        guard let json = try? await post("player", ["videoId": id]),
+              let list = YTParse.dig(json, "captions", "playerCaptionsTracklistRenderer", "captionTracks") as? [[String: Any]] else { return [] }
+        return list.compactMap { t in
+            guard let url = t["baseUrl"] as? String else { return nil }
+            let lang = t["languageCode"] as? String ?? ""
+            let auto = (t["kind"] as? String) == "asr"
+            let name = YTParse.text(t["name"]) ?? lang
+            return CaptionTrack(name: auto ? "\(name)" : name, lang: lang, url: url, auto: auto)
+        }
+    }
+
+    func cues(_ track: CaptionTrack) async -> [Cue] {
+        guard let url = URL(string: track.url + "&fmt=json3"),
+              let result = try? await session.data(from: url),
+              let json = try? JSONSerialization.jsonObject(with: result.0) as? [String: Any],
+              let events = json["events"] as? [[String: Any]] else { return [] }
+        var out: [Cue] = []
+        for e in events {
+            guard let segs = e["segs"] as? [[String: Any]] else { continue }
+            let text = segs.compactMap { $0["utf8"] as? String }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            let start = Double(e["tStartMs"] as? Int ?? 0) / 1000
+            let dur = Double(e["dDurationMs"] as? Int ?? 2000) / 1000
+            out.append(Cue(start: start, end: start + dur, text: text))
+        }
+        return out.sorted { $0.start < $1.start }
+    }
+
     // MARK: Video page
 
     func details(_ id: String) async throws -> VideoDetails {

@@ -40,15 +40,8 @@ struct WatchView: View {
     private var portrait: some View {
         ZStack(alignment: .top) {
             Backdrop().ignoresSafeArea()
-            if AppSettings.shared.d.ambient, let v = p.current, t.glass {
-                Thumbnail(video: v, radius: 0)
-                    .frame(maxWidth: .infinity)
-                    .scaleEffect(1.6)
-                    .blur(radius: 50)
-                    .opacity(t.dark ? 0.55 : 0.6)
-                    .frame(height: 380)
-                    .clipped()
-                    .mask(LinearGradient(colors: [.black, .black, .clear], startPoint: .top, endPoint: .bottom))
+            if AppSettings.shared.d.ambient, let v = p.current {
+                AmbientGlow(colors: p.ambient, fallback: v, strength: AppSettings.shared.d.ambientStrength, dark: t.dark)
                     .ignoresSafeArea()
             }
             VStack(spacing: 0) {
@@ -314,7 +307,21 @@ struct PlayerArea: View {
                 Thumbnail(video: v, radius: 0, large: true).blur(radius: 2).overlay(Color.black.opacity(0.35))
                 Image(systemName: "headphones").font(.system(size: 40, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
             } else {
-                VideoSurface(main: true)
+                VideoSurface(main: true, gravity: fullscreen && AppSettings.shared.d.fillScreen ? .resizeAspectFill : .resizeAspect)
+            }
+            if let caption = p.captionText {
+                VStack {
+                    Spacer()
+                    Text(caption)
+                        .font(.system(size: fullscreen ? 20 : 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+                        .padding(.bottom, showControls ? 56 : 14)
+                        .padding(.horizontal, 16)
+                }
+                .allowsHitTesting(false)
             }
             gestureLayer
             if let flash {
@@ -322,7 +329,11 @@ struct PlayerArea: View {
                     .padding(18).background(.black.opacity(0.35), in: Circle())
                     .transition(.scale.combined(with: .opacity))
             }
-            if showControls || p.loading || !p.isPlaying { controls.transition(.opacity) }
+            if p.locked {
+                lockOverlay
+            } else if showControls || p.loading || !p.isPlaying {
+                controls.transition(.opacity)
+            }
             if let e = p.error {
                 VStack(spacing: 10) {
                     Text(e).font(.system(size: 14, weight: .semibold)).foregroundStyle(.white).multilineTextAlignment(.center)
@@ -340,6 +351,21 @@ struct PlayerArea: View {
         .onAppear { scheduleHide() }
         .statusBarHidden(fullscreen)
         .persistentSystemOverlays(fullscreen ? .hidden : .automatic)
+    }
+
+    private var lockOverlay: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .overlay(alignment: .topTrailing) {
+                Button { withAnimation(Motion.spring) { p.locked = false } } label: {
+                    Label("Tap to unlock", systemImage: "lock.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .background(.ultraThinMaterial.opacity(0.8), in: Capsule())
+                }
+                .padding(12)
+            }
     }
 
     private var gestureLayer: some View {
@@ -389,6 +415,24 @@ struct PlayerArea: View {
                         if fullscreen { onFullscreen() } else { onCollapse() }
                     }
                     Spacer()
+                    Button {
+                        AppSettings.shared.set(\.autoplay, !AppSettings.shared.d.autoplay)
+                        p.showToast(AppSettings.shared.d.autoplay ? "Autoplay is on" : "Autoplay is off")
+                        scheduleHide()
+                    } label: {
+                        Capsule()
+                            .fill(AppSettings.shared.d.autoplay ? Color.white : Color.white.opacity(0.3))
+                            .frame(width: 38, height: 22)
+                            .overlay(alignment: AppSettings.shared.d.autoplay ? .trailing : .leading) {
+                                Image(systemName: AppSettings.shared.d.autoplay ? "play.fill" : "pause.fill")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundStyle(AppSettings.shared.d.autoplay ? .black : .white)
+                                    .frame(width: 18, height: 18)
+                                    .background(AppSettings.shared.d.autoplay ? Color.white : Color.black.opacity(0.5), in: Circle())
+                                    .padding(2)
+                            }
+                    }
+                    roundButton(p.captionTrack == nil ? "captions.bubble" : "captions.bubble.fill") { p.toggleCaptions() }
                     roundButton("tv") { AppState.shared.showCast = true }
                     if p.pipPossible { roundButton("pip.enter") { p.startPiP() } }
                     roundButton("gearshape") { onSettings() }
@@ -409,6 +453,10 @@ struct PlayerArea: View {
                         .overlay(Circle().strokeBorder(.white.opacity(0.35), lineWidth: 1))
                     }
                     Button { p.skip(10); scheduleHide() } label: { Image(systemName: "goforward.10").font(.system(size: 24, weight: .semibold)) }
+                        .overlay(alignment: .trailing) {
+                            Button { p.next() } label: { Image(systemName: "forward.end.fill").font(.system(size: 20, weight: .semibold)) }
+                                .offset(x: 52)
+                        }
                 }
                 .foregroundStyle(.white)
                 .buttonStyle(PressStyle())
@@ -543,7 +591,10 @@ struct CommentsSheet: View {
                 .padding(.bottom, 30)
             }
         }
-        .presentationBackground(.ultraThinMaterial)
+        .background { Backdrop().ignoresSafeArea() }
+        .presentationBackground(.clear)
+        .presentationCornerRadius(30)
+        .preferredColorScheme(t.dark ? .dark : .light)
         .task {
             next = p.details?.commentsToken
             await load()
@@ -565,43 +616,110 @@ struct CommentsSheet: View {
     }
 }
 
+/// Player "More" sheet, matching the Android app: quality, speed, captions, audio only,
+/// sleep timer, ambient mode, fill screen, lock, data saver and autoplay.
 struct PlayerSettingsSheet: View {
     @Environment(\.theme) private var t
+    @Environment(\.dismiss) private var dismiss
     var p = PlayerModel.shared
     var settings = AppSettings.shared
 
+    private var sleepLabel: String {
+        if p.sleepAtEnd { return "End of video" }
+        if let at = p.sleepAt { return "On · \(max(1, Int(at.timeIntervalSinceNow / 60))) min left" }
+        return "Off"
+    }
+
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("Playback speed") {
-                    Picker("Speed", selection: Binding(get: { p.speed }, set: { p.setSpeed($0) })) {
-                        ForEach([Float(0.5), 0.75, 1, 1.25, 1.5, 1.75, 2], id: \.self) { s in
-                            Text(s == 1 ? "Normal" : String(format: "%gx", s)).tag(s)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-                Section("Quality") {
-                    Toggle("Audio only", isOn: Binding(get: { p.audioOnly }, set: { p.setAudioOnly($0) }))
-                    Toggle("Data saver (480p max)", isOn: Binding(get: { settings.d.dataSaver }, set: { settings.set(\.dataSaver, $0); p.reload() }))
-                }
-                Section("Sleep timer") {
-                    ForEach([15, 30, 45, 60], id: \.self) { m in
-                        Button("\(m) minutes") { p.setSleep(minutes: m) }
-                    }
-                    Button("End of video") { p.setSleepAtEnd() }
-                    if p.sleepAt != nil || p.sleepAtEnd {
-                        Button("Turn off", role: .destructive) { p.setSleep(minutes: nil) }
-                    }
-                }
-                Section {
-                    Toggle("Autoplay next video", isOn: settings.binding(\.autoplay))
-                } footer: {
-                    Text("SponsorBlock skips are set in Settings.")
+        GlassSheet(title: "More", subtitle: p.current?.title) {
+            RowGroup(title: "Picture") {
+                ChoiceRow(icon: "sparkles.rectangle.stack", title: "Quality", note: p.isHLS ? "Auto adapts to your connection" : "Quality for current video",
+                          options: [("Auto", 0), ("1080p", 1080), ("720p", 720), ("480p", 480), ("360p", 360)],
+                          selection: p.qualityCap ?? 0) { p.setQuality($0 == 0 ? nil : $0) }
+                RowDivider(inset: 58)
+                ChoiceRow(icon: "gauge.with.dots.needle.67percent", title: "Playback speed",
+                          options: [Float(0.5), 0.75, 1, 1.25, 1.5, 1.75, 2].map { ($0 == 1 ? "Normal" : String(format: "%gx", $0), $0) },
+                          selection: p.speed) { p.setSpeed($0) }
+                RowDivider(inset: 58)
+                captions
+            }
+            RowGroup(title: "Listening") {
+                ToggleRow(icon: "headphones", title: "Audio only", note: "Plays just the sound: less data, less battery",
+                          isOn: Binding(get: { p.audioOnly }, set: { p.setAudioOnly($0) }))
+                RowDivider(inset: 58)
+                ChoiceRow(icon: "moon.zzz", title: "Sleep timer", note: sleepLabel,
+                          options: [("Off", -1), ("15 min", 15), ("30 min", 30), ("45 min", 45), ("60 min", 60), ("End of video", 0)],
+                          selection: p.sleepChoice) { v in
+                    if v == 0 { p.setSleepAtEnd() } else if v < 0 { p.setSleep(minutes: nil) } else { p.setSleep(minutes: v) }
                 }
             }
-            .navigationTitle("Player")
-            .navigationBarTitleDisplayMode(.inline)
+            RowGroup(title: "Look") {
+                ToggleRow(icon: "rays", title: "Ambient mode", note: "The video's colours glow softly around the player", isOn: settings.binding(\.ambient))
+                if settings.d.ambient {
+                    SliderRow(title: "Strength", valueLabel: "\(Int(settings.d.ambientStrength * 100))%", value: settings.binding(\.ambientStrength))
+                }
+                RowDivider(inset: 58)
+                ToggleRow(icon: "arrow.up.left.and.arrow.down.right", title: "Fill screen in fullscreen", note: "Uses the whole display, around the camera too", isOn: settings.binding(\.fillScreen))
+            }
+            RowGroup(title: "More") {
+                NavRow(icon: "lock", title: "Lock screen", note: "Ignore touches while you watch", chevron: false) {
+                    p.locked = true
+                    dismiss()
+                }
+                RowDivider(inset: 58)
+                ToggleRow(icon: "antenna.radiowaves.left.and.right", title: "Data saver", note: "Start videos at 480p",
+                          isOn: Binding(get: { settings.d.dataSaver }, set: { settings.set(\.dataSaver, $0); p.setQuality($0 ? 480 : nil) }))
+                RowDivider(inset: 58)
+                ToggleRow(icon: "forward.end", title: "Autoplay next video", isOn: settings.binding(\.autoplay))
+            }
         }
+    }
+
+    @ViewBuilder
+    private var captions: some View {
+        if p.captionTracks.isEmpty {
+            NavRow(icon: "captions.bubble", title: "Captions", value: "None", chevron: false) {}
+                .disabled(true)
+        } else {
+            ChoiceRow(icon: "captions.bubble", title: "Captions",
+                      options: [("Off", "")] + p.captionTracks.map { ($0.auto ? "\($0.name) (auto)" : $0.name, $0.url) },
+                      selection: p.captionTrack?.url ?? "") { url in
+                p.selectCaption(p.captionTracks.first { $0.url == url })
+            }
+        }
+    }
+}
+
+/// Soft coloured light from the video, behind the player (Android's ambient mode).
+struct AmbientGlow: View {
+    var colors: [Color]
+    var fallback: Video
+    var strength: Double
+    var dark: Bool
+
+    var body: some View {
+        GeometryReader { g in
+            let w = g.size.width
+            ZStack {
+                if colors.count == 4 {
+                    ForEach(0..<4, id: \.self) { i in
+                        Circle()
+                            .fill(colors[i])
+                            .frame(width: w * 0.95, height: w * 0.95)
+                            .offset(x: (i % 2 == 0 ? -1 : 1) * w * 0.28, y: (i < 2 ? 0.05 : 0.42) * w)
+                    }
+                } else {
+                    Thumbnail(video: fallback, radius: 0)
+                        .frame(width: w)
+                        .scaleEffect(1.5)
+                }
+            }
+            .frame(width: w, height: w * 1.15, alignment: .top)
+            .blur(radius: 60)
+            .opacity((dark ? 0.85 : 0.7) * (0.25 + strength * 0.75))
+            .mask(LinearGradient(colors: [.black, .black, .clear], startPoint: .top, endPoint: .bottom))
+            .frame(maxHeight: .infinity, alignment: .top)
+        }
+        .allowsHitTesting(false)
     }
 }

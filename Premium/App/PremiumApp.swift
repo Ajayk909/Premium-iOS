@@ -72,6 +72,7 @@ struct RootView: View {
         .preferredColorScheme(theme.dark ? .dark : .light)
         .tint(theme.ink)
         .onReceive(clock) { now = $0 }
+        .task { await GoogleAccount.shared.refreshOnLaunch() }
     }
 
     @ViewBuilder

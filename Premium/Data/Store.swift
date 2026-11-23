@@ -186,6 +186,44 @@ final class Library {
         save()
     }
 
+    // MARK: Google import
+
+    /// Adds channels you aren't subscribed to yet. Returns how many were new.
+    func mergeSubscriptions(_ list: [Channel]) -> Int {
+        var added = 0
+        for c in list {
+            if let i = d.subscriptions.firstIndex(where: { $0.id == c.id }) {
+                if d.subscriptions[i].avatar == nil { d.subscriptions[i].avatar = c.avatar }
+            } else {
+                d.subscriptions.append(c)
+                added += 1
+            }
+        }
+        save()
+        return added
+    }
+
+    func upsertPlaylist(name: String, sourceID: String, videos: [Video]) {
+        if let i = d.playlists.firstIndex(where: { $0.sourceID == sourceID }) {
+            d.playlists[i].name = name
+            d.playlists[i].videos = videos
+        } else {
+            var p = Playlist(name: name)
+            p.sourceID = sourceID
+            p.videos = videos
+            d.playlists.append(p)
+        }
+        save()
+    }
+
+    func mergeLiked(_ list: [Video]) -> Int {
+        let have = Set(d.liked.map(\.id))
+        let fresh = list.filter { !have.contains($0.id) }
+        d.liked += fresh
+        save()
+        return fresh.count
+    }
+
     // MARK: Searches
     func addSearch(_ q: String) {
         let q = q.trimmingCharacters(in: .whitespaces)
@@ -213,6 +251,13 @@ struct SettingsData: Codable {
     var speed: Double = 1
     var rokuIP: String? = nil
     var rokuName: String? = nil
+    var ambientStrength: Double = 0.65
+    var fillScreen = false
+    var maxLengthMinutes = 0
+    var blockedChannels: [Channel] = []
+    var captionLanguage: String? = nil
+    var syncOnLaunch = true
+    var lastSync: Date? = nil
 
     init() {}
 
@@ -231,6 +276,13 @@ struct SettingsData: Codable {
         speed = (try? c.decode(Double.self, forKey: .speed)) ?? d.speed
         rokuIP = try? c.decode(String.self, forKey: .rokuIP)
         rokuName = try? c.decode(String.self, forKey: .rokuName)
+        ambientStrength = (try? c.decode(Double.self, forKey: .ambientStrength)) ?? d.ambientStrength
+        fillScreen = (try? c.decode(Bool.self, forKey: .fillScreen)) ?? d.fillScreen
+        maxLengthMinutes = (try? c.decode(Int.self, forKey: .maxLengthMinutes)) ?? d.maxLengthMinutes
+        blockedChannels = (try? c.decode([Channel].self, forKey: .blockedChannels)) ?? d.blockedChannels
+        captionLanguage = try? c.decode(String.self, forKey: .captionLanguage)
+        syncOnLaunch = (try? c.decode(Bool.self, forKey: .syncOnLaunch)) ?? d.syncOnLaunch
+        lastSync = try? c.decode(Date.self, forKey: .lastSync)
     }
 }
 
@@ -264,9 +316,31 @@ final class AppSettings {
     }
 
     func allowed(_ v: Video) -> Bool {
+        if !d.blockedChannels.isEmpty,
+           d.blockedChannels.contains(where: { $0.id == v.channelId || (!v.channel.isEmpty && $0.name == v.channel) }) { return false }
+        if d.maxLengthMinutes > 0, let secs = v.durationSeconds, secs > d.maxLengthMinutes * 60 { return false }
         let words = d.blockedWords.map { $0.lowercased() }.filter { !$0.isEmpty }
         guard !words.isEmpty else { return true }
-        let hay = (v.title + " " + v.channel).lowercased()
+        let hay = v.title.lowercased()
         return !words.contains { hay.contains($0) }
+    }
+
+    func blockChannel(_ c: Channel) {
+        guard !d.blockedChannels.contains(where: { $0.id == c.id }) else { return }
+        set(\.blockedChannels, d.blockedChannels + [c])
+    }
+
+    func unblockChannel(_ id: String) {
+        set(\.blockedChannels, d.blockedChannels.filter { $0.id != id })
+    }
+
+    /// SponsorBlock categories are grouped the same way as the Android settings.
+    func skipGroup(_ cats: [String]) -> Binding<Bool> {
+        Binding(get: { cats.allSatisfy { self.d.sponsorCategories.contains($0) } },
+                set: { on in
+                    var list = self.d.sponsorCategories.filter { !cats.contains($0) }
+                    if on { list += cats }
+                    self.set(\.sponsorCategories, list)
+                })
     }
 }

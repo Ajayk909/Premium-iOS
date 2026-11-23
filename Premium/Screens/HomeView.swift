@@ -108,7 +108,6 @@ struct HomeView: View {
         ScrollView {
             LazyVStack(spacing: t.glass ? 14 : 4) {
                 if t.usesGreeting { greetingHeader } else { classicHeader }
-                if t.usesGreeting { widgets }
                 chips
                 if model.loading {
                     LoadingDots()
@@ -172,98 +171,6 @@ struct HomeView: View {
         .foregroundStyle(t.ink)
         .padding(.horizontal, 14)
         .frame(height: 48)
-    }
-
-    // MARK: Widgets
-
-    private var widgets: some View {
-        let continueVideo = lib.d.history.first { lib.progress($0.id) > 5 } ?? lib.d.history.first
-        let player = PlayerModel.shared
-        let upNext = player.queue.first ?? lib.d.watchLater.first
-        return VStack(spacing: 12) {
-            HStack(spacing: 12) {
-                widgetVideo(label: "Continue watching", video: continueVideo, playing: continueVideo != nil && continueVideo?.id == player.current?.id, emptyText: "Videos you watch show up here")
-                widgetVideo(label: player.queue.isEmpty ? "Watch later" : "Up next · Queue \(player.queue.count)", video: upNext, playing: false, emptyText: "Save videos with •••")
-            }
-            HStack(spacing: 12) {
-                weekWidget
-                castWidget
-            }
-        }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 4)
-    }
-
-    private func widgetVideo(label: String, video: Video?, playing: Bool, emptyText: String) -> some View {
-        Button { if let video { PlayerModel.shared.play(video) } } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                CardLabel(text: label).lineLimit(1)
-                if let video {
-                    Thumbnail(video: video, radius: 12)
-                    Text(video.title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(t.ink).lineLimit(2).multilineTextAlignment(.leading)
-                    Spacer(minLength: 0)
-                } else {
-                    Spacer()
-                    Text(emptyText).font(.system(size: 13)).foregroundStyle(t.ink2).multilineTextAlignment(.leading)
-                    Spacer()
-                }
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: 176)
-            .surface(26)
-            .rainbowEdge(26, on: playing)
-        }
-        .buttonStyle(PressStyle())
-    }
-
-    private var weekWidget: some View {
-        let days = lib.lastSevenDays
-        let maxS = max(days.map { $0.seconds }.max() ?? 1, 1)
-        return Button { AppState.shared.push(.stats) } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                CardLabel(text: "This week")
-                Text(formatDuration(lib.weekTotal)).font(.system(size: 26, weight: .semibold, design: .rounded)).foregroundStyle(t.ink)
-                HStack(alignment: .bottom, spacing: 5) {
-                    ForEach(Array(days.enumerated()), id: \.offset) { _, d in
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .fill(d.today ? t.accent : t.ink.opacity(0.13))
-                            .frame(height: max(6, 32 * d.seconds / maxS))
-                    }
-                }
-                .frame(height: 32, alignment: .bottom)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: 128)
-            .surface(26)
-        }
-        .buttonStyle(PressStyle())
-    }
-
-    private var castWidget: some View {
-        let roku = Roku.shared
-        return Button { AppState.shared.showCast = true } label: {
-            VStack(alignment: .leading, spacing: 5) {
-                CardLabel(text: "Cast")
-                Text(roku.current?.name ?? "Roku TV")
-                    .font(.system(size: 20, weight: .semibold)).foregroundStyle(t.ink).lineLimit(1).minimumScaleFactor(0.7)
-                HStack(spacing: 6) {
-                    Circle().fill(roku.current == nil ? t.ink3 : t.success).frame(width: 7, height: 7)
-                    Text(roku.current == nil ? "Not set up" : "Ready").font(.system(size: 12.5)).foregroundStyle(t.ink2)
-                }
-                Spacer(minLength: 0)
-                Label(roku.current == nil ? "Set up" : "Remote", systemImage: "tv")
-                    .font(.system(size: 12.5, weight: .semibold)).foregroundStyle(t.ink)
-                    .padding(.horizontal, 12).padding(.vertical, 6)
-                    .surface(16, strong: true)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: 128)
-            .surface(26)
-        }
-        .buttonStyle(PressStyle())
     }
 
     private var chips: some View {

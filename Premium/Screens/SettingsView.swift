@@ -5,75 +5,96 @@ struct SettingsView: View {
     @Environment(\.theme) private var t
     var settings = AppSettings.shared
     var lib = Library.shared
+    var account = GoogleAccount.shared
     @State private var newWord = ""
     @State private var importing = false
     @State private var confirmClear = false
-    @State private var message: String?
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 20) {
                 PageHeader(title: "Settings", subtitle: "Make it yours")
 
-                group("Look") {
-                    navRow("paintpalette", "Appearance", settings.d.theme.title) { AppState.shared.push(.appearance) }
+                RowGroup(title: "Google account") {
+                    AccountCard()
                 }
 
-                group("Playback") {
-                    toggleRow("Autoplay next video", settings.binding(\.autoplay))
-                    divider
-                    toggleRow("Data saver", settings.binding(\.dataSaver), note: "Caps video at 480p")
-                    divider
-                    toggleRow("Hide Shorts on Home", settings.binding(\.hideShortsOnHome))
-                }
-
-                group("SponsorBlock — skip automatically") {
-                    ForEach(Array(SponsorBlock.allCategories.enumerated()), id: \.offset) { i, cat in
-                        toggleRow(cat.1, Binding(
-                            get: { settings.d.sponsorCategories.contains(cat.0) },
-                            set: { on in
-                                var list = settings.d.sponsorCategories.filter { $0 != cat.0 }
-                                if on { list.append(cat.0) }
-                                settings.set(\.sponsorCategories, list)
-                            }))
-                        if i < SponsorBlock.allCategories.count - 1 { divider }
+                RowGroup(title: "Look") {
+                    NavRow(icon: "paintpalette", title: "Theme", value: settings.d.theme.title) { AppState.shared.push(.appearance) }
+                    RowDivider(inset: 58)
+                    ToggleRow(icon: "rays", title: "Ambient mode", note: "The video's colours glow softly around the player", isOn: settings.binding(\.ambient))
+                    if settings.d.ambient {
+                        SliderRow(title: "Strength", valueLabel: "\(Int(settings.d.ambientStrength * 100))%", value: settings.binding(\.ambientStrength))
                     }
                 }
 
-                group("Blocked words") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Videos whose title or channel contains these words are hidden everywhere.")
-                            .font(.system(size: 13)).foregroundStyle(t.ink2)
-                        HStack {
-                            TextField("Add a word", text: $newWord).foregroundStyle(t.ink).onSubmit(addWord)
-                            Button("Add", action: addWord).font(.system(size: 14, weight: .semibold)).disabled(newWord.isEmpty)
-                        }
-                        .padding(.horizontal, 14).frame(height: 42).surface(21, strong: true)
-                        FlowChips(words: settings.d.blockedWords) { w in
-                            settings.set(\.blockedWords, settings.d.blockedWords.filter { $0 != w })
-                        }
+                RowGroup(title: "Feed") {
+                    ToggleRow(icon: "play.rectangle.on.rectangle", title: "Hide Shorts", note: "Keeps Shorts off Home (they stay in the Shorts tab)", isOn: settings.binding(\.hideShortsOnHome))
+                    RowDivider(inset: 58)
+                    ChoiceRow(icon: "timer", title: "Maximum video length",
+                              options: [("None", 0), ("10 min", 10), ("20 min", 20), ("30 min", 30), ("60 min", 60)],
+                              selection: settings.d.maxLengthMinutes) { settings.set(\.maxLengthMinutes, $0) }
+                    RowDivider(inset: 58)
+                    mutedWords
+                    if !settings.d.blockedChannels.isEmpty {
+                        RowDivider(inset: 58)
+                        blockedChannels
                     }
-                    .padding(16)
                 }
 
-                group("TV") {
-                    navRow("tv", "Roku TV", Roku.shared.current?.name ?? "Not set up") { AppState.shared.showCast = true }
+                RowGroup(title: "Playback") {
+                    ToggleRow(icon: "forward.end", title: "Autoplay next video", isOn: settings.binding(\.autoplay))
+                    RowDivider(inset: 58)
+                    ToggleRow(icon: "arrow.up.left.and.arrow.down.right", title: "Fill screen in fullscreen", note: "Uses the whole display, around the camera too", isOn: settings.binding(\.fillScreen))
+                    RowDivider(inset: 58)
+                    ToggleRow(icon: "dollarsign.circle", title: "Skip sponsors", note: "Auto-skips sponsor segments with SponsorBlock", isOn: settings.skipGroup(["sponsor"]))
+                    RowDivider(inset: 58)
+                    ToggleRow(icon: "megaphone", title: "Skip self-promo & reminders", isOn: settings.skipGroup(["selfpromo", "interaction"]))
+                    RowDivider(inset: 58)
+                    ToggleRow(icon: "film.stack", title: "Skip intros & outros", isOn: settings.skipGroup(["intro", "outro"]))
+                    RowDivider(inset: 58)
+                    ToggleRow(icon: "music.note", title: "Skip non-music parts", note: "In music videos", isOn: settings.skipGroup(["music_offtopic"]))
                 }
 
-                group("Your data") {
+                RowGroup(title: "Data") {
+                    ToggleRow(icon: "antenna.radiowaves.left.and.right", title: "Data saver", note: "Start videos at 480p", isOn: settings.binding(\.dataSaver))
+                }
+
+                RowGroup(title: "TV") {
+                    NavRow(icon: "tv", title: "Roku TV", value: Roku.shared.current?.name ?? "Not set up") { AppState.shared.showCast = true }
+                }
+
+                RowGroup(title: "History & privacy") {
+                    NavRow(icon: "clock.arrow.circlepath", title: "Manage all history", value: "\(lib.d.history.count)") { AppState.shared.push(.list(.history)) }
+                    RowDivider(inset: 58)
+                    NavRow(icon: "chart.bar", title: "Watch time", note: "This week and your top channels") { AppState.shared.push(.stats) }
+                    RowDivider(inset: 58)
+                    NavRow(icon: "trash", title: "Clear watch history", tint: t.danger, chevron: false) { confirmClear = true }
+                }
+
+                RowGroup(title: "Your data") {
                     ShareLink(item: BackupFile(data: lib.exportData()), preview: SharePreview("Premium backup")) {
-                        rowLabel("square.and.arrow.up", "Back up library", nil)
+                        HStack(spacing: 12) {
+                            Image(systemName: "square.and.arrow.up").font(.system(size: 14, weight: .semibold)).foregroundStyle(t.ink)
+                                .frame(width: 30, height: 30)
+                                .background(t.dark ? Color.white.opacity(0.1) : Color.white.opacity(0.9), in: Circle())
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Back up library").font(.system(size: 15.5, weight: .medium)).foregroundStyle(t.ink)
+                                Text("Save history, playlists, subscriptions and rules to a file").font(.system(size: 12)).foregroundStyle(t.ink2)
+                            }
+                            Spacer()
+                        }
+                        .padding(.horizontal, 16)
+                        .frame(minHeight: 56)
                     }
                     .buttonStyle(.plain)
-                    divider
-                    navRow("square.and.arrow.down", "Restore from backup", nil) { importing = true }
-                    divider
-                    navRow("trash", "Clear watch history", nil, tint: t.danger) { confirmClear = true }
+                    RowDivider(inset: 58)
+                    NavRow(icon: "square.and.arrow.down", title: "Restore from backup", note: "Replaces your library with the file's") { importing = true }
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Premium for iPhone \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
-                    Text("Personal, open-source and ad-free. Everything stays on this phone.")
+                    Text("Premium for iPhone \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "") · open source · no ads")
+                    Text("Everything stays on this phone.")
                 }
                 .font(.system(size: 12.5))
                 .foregroundStyle(t.ink3)
@@ -89,14 +110,51 @@ struct SettingsView: View {
             let ok = url.startAccessingSecurityScopedResource()
             defer { if ok { url.stopAccessingSecurityScopedResource() } }
             if let data = try? Data(contentsOf: url), lib.importData(data) {
-                PlayerModel.shared.showToast("Library restored")
+                PlayerModel.shared.showToast("Restored your library")
             } else {
-                PlayerModel.shared.showToast("That file isn't a Premium backup")
+                PlayerModel.shared.showToast("That isn't a Premium backup file")
             }
         }
-        .confirmationDialog("Clear all watch history?", isPresented: $confirmClear, titleVisibility: .visible) {
-            Button("Clear history", role: .destructive) { lib.clearHistory() }
+        .confirmationDialog("Clear watch history?", isPresented: $confirmClear, titleVisibility: .visible) {
+            Button("Clear", role: .destructive) { lib.clearHistory() }
         }
+    }
+
+    private var mutedWords: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Muted keywords").font(.system(size: 15.5, weight: .medium)).foregroundStyle(t.ink)
+                Text("Videos with these words in the title are hidden.").font(.system(size: 12)).foregroundStyle(t.ink2)
+            }
+            HStack {
+                TextField("Add a word", text: $newWord).foregroundStyle(t.ink).onSubmit(addWord)
+                Button("Add", action: addWord).font(.system(size: 14, weight: .semibold)).foregroundStyle(t.ink).disabled(newWord.isEmpty)
+            }
+            .padding(.horizontal, 14).frame(height: 42)
+            .background(t.ink.opacity(0.06), in: Capsule())
+            if !settings.d.blockedWords.isEmpty {
+                FlowChips(words: settings.d.blockedWords) { w in
+                    settings.set(\.blockedWords, settings.d.blockedWords.filter { $0 != w })
+                }
+            }
+        }
+        .padding(16)
+    }
+
+    private var blockedChannels: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Blocked channels").font(.system(size: 15.5, weight: .medium)).foregroundStyle(t.ink)
+            ForEach(settings.d.blockedChannels) { c in
+                HStack(spacing: 10) {
+                    Avatar(url: c.avatar, name: c.name, size: 28)
+                    Text(c.name).font(.system(size: 14.5)).foregroundStyle(t.ink).lineLimit(1)
+                    Spacer()
+                    Button("Unblock") { settings.unblockChannel(c.id) }
+                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(t.ink2)
+                }
+            }
+        }
+        .padding(16)
     }
 
     private func addWord() {
@@ -105,43 +163,63 @@ struct SettingsView: View {
         settings.set(\.blockedWords, settings.d.blockedWords + [w])
         newWord = ""
     }
+}
 
-    private var divider: some View { Rectangle().fill(t.divider).frame(height: 1).padding(.leading, 16) }
+/// Google account card: sign in, import from YouTube, sign out — like the Android Library screen.
+struct AccountCard: View {
+    @Environment(\.theme) private var t
+    var account = GoogleAccount.shared
+    var settings = AppSettings.shared
 
-    private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            CardLabel(text: title).padding(.horizontal, 24)
-            VStack(spacing: 0) { content() }.modifier(ListCard())
-        }
-    }
-
-    private func toggleRow(_ title: String, _ binding: Binding<Bool>, note: String? = nil) -> some View {
-        Toggle(isOn: binding) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 15.5, weight: .medium)).foregroundStyle(t.ink)
-                if let note { Text(note).font(.system(size: 12)).foregroundStyle(t.ink2) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let p = account.profile {
+                HStack(spacing: 12) {
+                    Avatar(url: p.avatar, name: p.name, size: 44).rainbowCircle(width: 2)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(p.name).font(.system(size: 16, weight: .semibold)).foregroundStyle(t.ink)
+                        Text(p.handle ?? "Signed in with Google").font(.system(size: 12.5)).foregroundStyle(t.ink2)
+                    }
+                    Spacer()
+                    Menu {
+                        Button(role: .destructive) { account.signOut() } label: { Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right") }
+                    } label: {
+                        Image(systemName: "ellipsis").font(.system(size: 15, weight: .semibold)).foregroundStyle(t.ink2).frame(width: 34, height: 34)
+                    }
+                }
+                .padding(16)
+                RowDivider()
+                NavRow(icon: "arrow.down.circle", title: account.busy ? "Importing…" : "Import from YouTube",
+                       note: "Subscriptions, playlists and liked videos", chevron: false) {
+                    Task { await account.importAll() }
+                }
+                .disabled(account.busy)
+                RowDivider(inset: 58)
+                ToggleRow(icon: "arrow.triangle.2.circlepath", title: "Stay in sync", note: "Picks up new subscriptions once a day", isOn: settings.binding(\.syncOnLaunch))
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Bring your YouTube with you").font(.system(size: 16, weight: .semibold)).foregroundStyle(t.ink)
+                    Text("Sign in to import your subscriptions, playlists and liked videos. You stay signed in on this iPhone until you sign out. Premium only reads your account — it never posts or changes anything.")
+                        .font(.system(size: 13)).foregroundStyle(t.ink2)
+                    Button { Task { await account.signIn() } } label: {
+                        HStack(spacing: 8) {
+                            if account.busy { ProgressView().tint(t.onAccent) } else { Image(systemName: "person.crop.circle.badge.checkmark") }
+                            Text("Sign in with Google")
+                        }
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(t.onAccent)
+                        .frame(maxWidth: .infinity).frame(height: 46)
+                        .background(t.accent, in: Capsule())
+                    }
+                    .buttonStyle(PressStyle())
+                    .disabled(account.busy)
+                }
+                .padding(16)
+            }
+            if let s = account.status {
+                Text(s).font(.system(size: 12.5)).foregroundStyle(t.ink2).padding(.horizontal, 16).padding(.bottom, 14)
             }
         }
-        .tint(t.dark ? Color(hex: 0x8A7CF0) : t.accent)
-        .padding(.horizontal, 16)
-        .frame(minHeight: 54)
-    }
-
-    private func rowLabel(_ icon: String, _ title: String, _ value: String?, tint: Color? = nil) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon).font(.system(size: 15, weight: .semibold)).foregroundStyle(tint ?? t.ink).frame(width: 24)
-            Text(title).font(.system(size: 15.5, weight: .medium)).foregroundStyle(tint ?? t.ink)
-            Spacer()
-            if let value { Text(value).font(.system(size: 14)).foregroundStyle(t.ink2) }
-            Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(t.ink3)
-        }
-        .padding(.horizontal, 16)
-        .frame(height: 54)
-        .contentShape(Rectangle())
-    }
-
-    private func navRow(_ icon: String, _ title: String, _ value: String?, tint: Color? = nil, action: @escaping () -> Void) -> some View {
-        Button(action: action) { rowLabel(icon, title, value, tint: tint) }.buttonStyle(.plain)
     }
 }
 
@@ -221,12 +299,14 @@ struct AppearanceView: View {
                     }
                 }
                 .padding(.horizontal, 20)
-                VStack(spacing: 0) {
-                    toggle("Evening mode", "Pearl Glass turns smoky after 8 pm", settings.binding(\.eveningMode))
-                    Rectangle().fill(t.divider).frame(height: 1).padding(.leading, 16)
-                    toggle("Ambient glow", "Tints the watch page from the video", settings.binding(\.ambient))
+                RowGroup(title: nil) {
+                    ToggleRow(icon: "moon.stars", title: "Evening mode", note: "Pearl Glass turns smoky after 8 pm", isOn: settings.binding(\.eveningMode))
+                    RowDivider(inset: 58)
+                    ToggleRow(icon: "rays", title: "Ambient mode", note: "The video's colours glow softly around the player", isOn: settings.binding(\.ambient))
+                    if settings.d.ambient {
+                        SliderRow(title: "Strength", valueLabel: "\(Int(settings.d.ambientStrength * 100))%", value: settings.binding(\.ambientStrength))
+                    }
                 }
-                .modifier(ListCard())
                 Text("Reduce Motion and Reduce Transparency in iPhone Settings → Accessibility are respected too.")
                     .font(.system(size: 12.5)).foregroundStyle(t.ink3).padding(.horizontal, 24)
             }
@@ -236,17 +316,6 @@ struct AppearanceView: View {
         .toolbar(.hidden, for: .navigationBar)
     }
 
-    private func toggle(_ title: String, _ note: String, _ b: Binding<Bool>) -> some View {
-        Toggle(isOn: b) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 15.5, weight: .medium)).foregroundStyle(t.ink)
-                Text(note).font(.system(size: 12)).foregroundStyle(t.ink2)
-            }
-        }
-        .tint(t.dark ? Color(hex: 0x8A7CF0) : t.accent)
-        .padding(.horizontal, 16)
-        .frame(minHeight: 58)
-    }
 }
 
 /// Mini picture of a theme for the picker.

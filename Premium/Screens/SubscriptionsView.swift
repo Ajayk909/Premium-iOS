@@ -151,22 +151,23 @@ struct SubscriptionsView: View {
 }
 
 private struct ManageSubs: View {
+    @Environment(\.theme) private var t
     var lib = Library.shared
     var body: some View {
-        NavigationStack {
-            List {
-                ForEach(lib.d.subscriptions) { c in
+        GlassSheet(title: "Subscriptions", subtitle: "\(lib.d.subscriptions.count) channels") {
+            RowGroup(title: nil) {
+                ForEach(Array(lib.d.subscriptions.enumerated()), id: \.element.id) { i, c in
+                    if i > 0 { RowDivider(inset: 62) }
                     HStack(spacing: 12) {
                         Avatar(url: c.avatar, name: c.name, size: 36)
-                        Text(c.name)
+                        Text(c.name).font(.system(size: 15.5, weight: .medium)).foregroundStyle(t.ink).lineLimit(1)
                         Spacer()
-                        Button("Unsubscribe", role: .destructive) { lib.toggleSubscribe(c) }
-                            .font(.system(size: 13, weight: .semibold))
+                        Button("Unsubscribe") { lib.toggleSubscribe(c) }
+                            .font(.system(size: 13, weight: .semibold)).foregroundStyle(t.danger)
                     }
+                    .padding(.horizontal, 16).frame(height: 58)
                 }
             }
-            .navigationTitle("\(lib.d.subscriptions.count) subscriptions")
-            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }

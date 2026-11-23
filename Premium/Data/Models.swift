@@ -73,6 +73,20 @@ struct VideoDetails {
     var commentCount: String?
 }
 
+struct CaptionTrack: Identifiable, Hashable {
+    var name: String
+    var lang: String
+    var url: String
+    var auto: Bool
+    var id: String { url }
+}
+
+struct Cue {
+    var start: Double
+    var end: Double
+    var text: String
+}
+
 struct Page {
     var items: [Video]
     var continuation: String?
@@ -90,6 +104,8 @@ struct Playlist: Identifiable, Codable, Hashable {
     var id = UUID().uuidString
     var name: String
     var videos: [Video] = []
+    /// Set when the playlist was imported from your YouTube account.
+    var sourceID: String? = nil
 }
 
 func formatTime(_ s: Double) -> String {

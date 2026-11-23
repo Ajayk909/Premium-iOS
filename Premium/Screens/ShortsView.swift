@@ -376,7 +376,9 @@ private struct ShortComments: View {
             }
             .padding(20)
         }
-        .presentationBackground(.ultraThinMaterial)
+        .background { Backdrop().ignoresSafeArea() }
+        .presentationBackground(.clear)
+        .presentationCornerRadius(30)
         .task {
             guard let token, let r = try? await InnerTube.shared.comments(token) else { return }
             items = r.items

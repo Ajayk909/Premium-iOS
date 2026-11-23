@@ -1,5 +1,6 @@
 import SwiftUI
 import AVKit
+import CoreImage
 import MediaPlayer
 import Observation
 
@@ -22,9 +23,20 @@ final class PlayerModel: NSObject {
     var speed: Float = 1
     var sleepAt: Date?
     var sleepAtEnd = false
+    /// -1 off, 0 end of video, otherwise minutes.
+    var sleepChoice = -1
     var segments: [SkipSegment] = []
     var toast: String?
     var pipActive = false
+    /// Four colours sampled from the video (top-left, top-right, bottom-left, bottom-right) for ambient mode.
+    var ambient: [Color] = []
+    /// nil = Auto. Otherwise the highest picture height allowed (1080, 720, …).
+    var qualityCap: Int?
+    var isHLS = false
+    var captionTracks: [CaptionTrack] = []
+    var captionTrack: CaptionTrack?
+    var captionText: String?
+    var locked = false
 
     let player = AVPlayer()
     @ObservationIgnored private var timeObserver: Any?
@@ -35,6 +47,11 @@ final class PlayerModel: NSObject {
     @ObservationIgnored private var lastSkip: Double = -10
     @ObservationIgnored private var tickCount = 0
     @ObservationIgnored private var pendingWatch: Double = 0
+    @ObservationIgnored private var videoOutput: AVPlayerItemVideoOutput?
+    @ObservationIgnored private let ambientQueue = DispatchQueue(label: "premium.ambient", qos: .utility)
+    @ObservationIgnored private let ciContext = CIContext(options: [.workingColorSpace: NSNull()])
+    @ObservationIgnored private var sampling = false
+    @ObservationIgnored private var cues: [Cue] = []
 
     override init() {
         super.init()
@@ -62,6 +79,11 @@ final class PlayerModel: NSObject {
         current = v
         details = nil
         segments = []
+        captionTracks = []
+        captionTrack = nil
+        captionText = nil
+        cues = []
+        locked = false
         error = nil
         time = 0
         duration = Double(v.durationSeconds ?? 0)
@@ -81,14 +103,25 @@ final class PlayerModel: NSObject {
         loading = true
         player.replaceCurrentItem(with: nil)
         let audioOnly = self.audioOnly
-        let maxHeight = AppSettings.shared.d.dataSaver ? 480 : 1080
+        let maxHeight = qualityCap ?? (AppSettings.shared.d.dataSaver ? 480 : 1080)
         let cats = AppSettings.shared.d.sponsorCategories
         loadTask = Task { @MainActor in
             async let info = try? InnerTube.shared.details(v.id)
             async let segs = SponsorBlock.segments(v.id, categories: cats)
+            async let tracks = InnerTube.shared.captionTracks(v.id)
             do {
                 let item = try await Streams.item(for: v.id, audioOnly: audioOnly, maxHeight: maxHeight)
                 guard !Task.isCancelled, self.current?.id == v.id else { return }
+                self.isHLS = (item.asset as? AVURLAsset)?.url.absoluteString.contains("m3u8") ?? false
+                if self.isHLS, let cap = self.qualityCap {
+                    item.preferredMaximumResolution = CGSize(width: cap * 16 / 9, height: cap)
+                } else if self.isHLS && !AppSettings.shared.d.dataSaver {
+                    item.preferredMaximumResolution = .zero
+                }
+                let out = AVPlayerItemVideoOutput(pixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)])
+                item.add(out)
+                self.videoOutput = out
+                self.ambient = []
                 self.player.replaceCurrentItem(with: item)
                 var start = seekTo ?? 0
                 if resume {
@@ -117,6 +150,14 @@ final class PlayerModel: NSObject {
             }
             let s = await segs
             if self.current?.id == v.id { self.segments = s }
+            let t = await tracks
+            if self.current?.id == v.id {
+                self.captionTracks = t
+                if let lang = AppSettings.shared.d.captionLanguage,
+                   let match = t.first(where: { $0.lang == lang && !$0.auto }) ?? t.first(where: { $0.lang == lang }) {
+                    self.selectCaption(match, remember: false)
+                }
+            }
             self.updateNowPlaying()
         }
     }
@@ -147,6 +188,90 @@ final class PlayerModel: NSObject {
 
     func skip(_ delta: Double) { seek(time + delta) }
 
+    // MARK: Quality & captions
+
+    func setQuality(_ height: Int?) {
+        qualityCap = height
+        if isHLS, let item = player.currentItem {
+            item.preferredMaximumResolution = height.map { CGSize(width: $0 * 16 / 9, height: $0) } ?? .zero
+            showToast(height.map { "Quality: up to \($0)p" } ?? "Quality: Auto")
+        } else {
+            reload()
+        }
+    }
+
+    func selectCaption(_ track: CaptionTrack?, remember: Bool = true) {
+        captionTrack = track
+        captionText = nil
+        cues = []
+        if remember { AppSettings.shared.set(\.captionLanguage, track?.lang) }
+        guard let track else { return }
+        Task { @MainActor in
+            let c = await InnerTube.shared.cues(track)
+            guard self.captionTrack == track else { return }
+            self.cues = c
+            if c.isEmpty { self.showToast("Couldn't load captions for this video") }
+        }
+    }
+
+    func toggleCaptions() {
+        if captionTrack != nil {
+            selectCaption(nil)
+        } else if let t = captionTracks.first(where: { $0.lang == (AppSettings.shared.d.captionLanguage ?? "en") }) ?? captionTracks.first(where: { !$0.auto }) ?? captionTracks.first {
+            selectCaption(t)
+        } else {
+            showToast("This video has no captions")
+        }
+    }
+
+    private func updateCaption() {
+        guard !cues.isEmpty else { if captionText != nil { captionText = nil }; return }
+        var lo = 0, hi = cues.count - 1, found: Cue?
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            if cues[mid].start <= time { found = cues[mid]; lo = mid + 1 } else { hi = mid - 1 }
+        }
+        let text = (found.map { time < $0.end ? $0.text : nil }) ?? nil
+        if text != captionText { captionText = text }
+    }
+
+    // MARK: Ambient mode
+
+    private func sampleAmbient() {
+        guard AppSettings.shared.d.ambient, expanded, !audioOnly, !sampling, let out = videoOutput else { return }
+        let t = player.currentTime()
+        sampling = true
+        ambientQueue.async { [weak self] in
+            guard let self else { return }
+            defer { DispatchQueue.main.async { self.sampling = false } }
+            guard let pb = out.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil) else { return }
+            let img = CIImage(cvPixelBuffer: pb)
+            let e = img.extent
+            let w = e.width / 2, h = e.height / 2
+            // Core Image's origin is bottom-left.
+            let rects = [CGRect(x: e.minX, y: e.minY + h, width: w, height: h),
+                         CGRect(x: e.minX + w, y: e.minY + h, width: w, height: h),
+                         CGRect(x: e.minX, y: e.minY, width: w, height: h),
+                         CGRect(x: e.minX + w, y: e.minY, width: w, height: h)]
+            let colors = rects.compactMap { self.average(img, $0) }
+            guard colors.count == 4 else { return }
+            DispatchQueue.main.async {
+                withAnimation(.easeInOut(duration: 1.1)) { self.ambient = colors }
+            }
+        }
+    }
+
+    private func average(_ img: CIImage, _ r: CGRect) -> Color? {
+        guard let f = CIFilter(name: "CIAreaAverage", parameters: [kCIInputImageKey: img, kCIInputExtentKey: CIVector(cgRect: r)]),
+              let o = f.outputImage else { return nil }
+        var px = [UInt8](repeating: 0, count: 4)
+        ciContext.render(o, toBitmap: &px, rowBytes: 4, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+        var hue: CGFloat = 0, sat: CGFloat = 0, bri: CGFloat = 0, a: CGFloat = 0
+        UIColor(red: CGFloat(px[0]) / 255, green: CGFloat(px[1]) / 255, blue: CGFloat(px[2]) / 255, alpha: 1)
+            .getHue(&hue, saturation: &sat, brightness: &bri, alpha: &a)
+        return Color(hue: Double(hue), saturation: Double(min(1, sat * 1.4)), brightness: Double(max(0.35, min(1, bri * 1.2))))
+    }
+
     func setSpeed(_ s: Float) {
         speed = s
         AppSettings.shared.set(\.speed, Double(s))
@@ -160,6 +285,7 @@ final class PlayerModel: NSObject {
 
     func setSleep(minutes: Int?) {
         sleepAtEnd = false
+        sleepChoice = minutes ?? -1
         sleepAt = minutes.map { Date().addingTimeInterval(Double($0) * 60) }
         showToast(minutes.map { "Sleep timer: \($0) min" } ?? "Sleep timer off")
     }
@@ -167,6 +293,7 @@ final class PlayerModel: NSObject {
     func setSleepAtEnd() {
         sleepAt = nil
         sleepAtEnd = true
+        sleepChoice = 0
         showToast("Stops at the end of this video")
     }
 
@@ -220,6 +347,8 @@ final class PlayerModel: NSObject {
         if let d = player.currentItem?.duration.seconds, d.isFinite, d > 0 { duration = d }
         isPlaying = player.rate > 0
         tickCount += 1
+        updateCaption()
+        if tickCount % 2 == 0 { sampleAmbient() }
         if isPlaying {
             pendingWatch += 0.25
             if tickCount % 40 == 0 {

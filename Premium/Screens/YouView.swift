@@ -8,6 +8,7 @@ struct YouView: View {
         ScrollView {
             VStack(spacing: 18) {
                 header
+                RowGroup(title: "Google account") { AccountCard() }
                 weekCard
                 if !lib.d.history.isEmpty {
                     VStack(spacing: 10) {
@@ -60,11 +61,12 @@ struct YouView: View {
             ZStack {
                 Circle().fill(t.dark ? Color.white.opacity(0.12) : .white)
                 Image(systemName: "person.fill").font(.system(size: 24)).foregroundStyle(t.ink)
+                if let p = GoogleAccount.shared.profile { Avatar(url: p.avatar, name: p.name, size: 58) }
             }
             .frame(width: 58, height: 58)
             .rainbowCircle(width: 2.5)
             VStack(alignment: .leading, spacing: 2) {
-                Text("You").font(.system(size: 26, weight: .bold)).foregroundStyle(t.ink)
+                Text(GoogleAccount.shared.profile?.name ?? "You").font(.system(size: 26, weight: .bold)).foregroundStyle(t.ink).lineLimit(1)
                 Text("\(lib.d.subscriptions.count) subscriptions · \(lib.d.history.count) watched")
                     .font(.system(size: 13)).foregroundStyle(t.ink2)
             }
@@ -340,45 +342,47 @@ struct PlaylistView: View {
 struct SaveSheet: View {
     var video: Video
     @Environment(\.theme) private var t
-    @Environment(\.dismiss) private var dismiss
     @State private var newName = ""
     var lib = Library.shared
 
     var body: some View {
-        NavigationStack {
-            List {
-                Button { lib.toggleWatchLater(video) } label: {
-                    HStack {
-                        Label("Watch later", systemImage: "clock")
-                        Spacer()
-                        if lib.inWatchLater(video.id) { Image(systemName: "checkmark") }
-                    }
-                }
-                Section("Playlists") {
-                    ForEach(lib.d.playlists) { pl in
-                        Button { lib.togglePlaylist(pl.id, video) } label: {
-                            HStack {
-                                Label(pl.name, systemImage: "list.bullet")
-                                Spacer()
-                                if lib.inPlaylist(pl.id, video.id) { Image(systemName: "checkmark") }
-                            }
-                        }
-                    }
-                    HStack {
-                        TextField("New playlist", text: $newName)
-                        Button("Create") {
-                            guard !newName.isEmpty else { return }
-                            lib.createPlaylist(newName, with: video)
-                            newName = ""
-                        }
-                        .disabled(newName.isEmpty)
-                    }
+        GlassSheet(title: "Save to…", subtitle: video.title) {
+            RowGroup(title: nil) {
+                check("clock", "Watch later", lib.inWatchLater(video.id)) { lib.toggleWatchLater(video) }
+                ForEach(lib.d.playlists) { pl in
+                    RowDivider(inset: 58)
+                    check("list.bullet", pl.name, lib.inPlaylist(pl.id, video.id)) { lib.togglePlaylist(pl.id, video) }
                 }
             }
-            .foregroundStyle(t.ink)
-            .navigationTitle("Save to…")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            RowGroup(title: "New playlist") {
+                HStack {
+                    TextField("Name", text: $newName).foregroundStyle(t.ink)
+                    Button("Create") {
+                        guard !newName.isEmpty else { return }
+                        lib.createPlaylist(newName, with: video)
+                        newName = ""
+                    }
+                    .font(.system(size: 14, weight: .semibold)).foregroundStyle(t.ink)
+                    .disabled(newName.isEmpty)
+                }
+                .padding(.horizontal, 16).frame(height: 54)
+            }
         }
+    }
+
+    private func check(_ icon: String, _ title: String, _ on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon).font(.system(size: 14, weight: .semibold)).foregroundStyle(t.ink)
+                    .frame(width: 30, height: 30)
+                    .background(t.dark ? Color.white.opacity(0.1) : Color.white.opacity(0.9), in: Circle())
+                Text(title).font(.system(size: 15.5, weight: .medium)).foregroundStyle(t.ink)
+                Spacer()
+                Image(systemName: on ? "checkmark.circle.fill" : "circle").font(.system(size: 20)).foregroundStyle(on ? t.toggleTint : t.ink3)
+            }
+            .padding(.horizontal, 16).frame(height: 56).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .sensoryFeedback(.selection, trigger: on)
     }
 }
