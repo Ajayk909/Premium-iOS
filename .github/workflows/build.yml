@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-15
@@ -46,6 +49,20 @@ jobs:
         with:
           name: Premium-unsigned-ipa
           path: Premium-unsigned.ipa
+
+      - name: Publish a download page (GitHub Release)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Premium for iPhone — build ${{ github.run_number }}
+          body: |
+            **Premium-simulator.zip** — upload to appetize.io to run it in your browser.
+            **Premium-unsigned.ipa** — sideload onto an iPhone with AltStore or Sideloadly.
+            Built from ${{ github.sha }}.
+          make_latest: true
+          files: |
+            Premium-simulator.zip
+            Premium-unsigned.ipa
 
       - name: Upload to Appetize (if a token is set)
         if: env.APPETIZE_TOKEN != ''
