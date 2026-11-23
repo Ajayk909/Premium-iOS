@@ -148,7 +148,7 @@ final class InnerTube {
         for e in events {
             guard let segs = e["segs"] as? [[String: Any]] else { continue }
             let text = segs.compactMap { $0["utf8"] as? String }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { continue }
+            guard !text.isEmpty, text.range(of: #"^\d{2}:\d{2}:\d{2}"#, options: .regularExpression) == nil else { continue }
             let start = Double(e["tStartMs"] as? Int ?? 0) / 1000
             let dur = Double(e["dDurationMs"] as? Int ?? 2000) / 1000
             out.append(Cue(start: start, end: start + dur, text: text))

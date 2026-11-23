@@ -691,7 +691,7 @@ struct PlayerSettingsSheet: View {
                 .disabled(true)
         } else {
             ChoiceRow(icon: "captions.bubble", title: "Captions",
-                      options: [("Off", "")] + p.captionTracks.map { ($0.auto ? "\($0.name) (auto)" : $0.name, $0.url) },
+                      options: [("Off", "")] + p.captionTracks.map { ($0.auto && !$0.name.lowercased().contains("auto") ? "\($0.name) (auto)" : $0.name, $0.url) },
                       selection: p.captionTrack?.url ?? "") { url in
                 p.selectCaption(p.captionTracks.first { $0.url == url })
             }
