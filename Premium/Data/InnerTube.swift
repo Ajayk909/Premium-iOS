@@ -123,7 +123,7 @@ final class InnerTube {
     func captionTracks(_ id: String) async -> [CaptionTrack] {
         // Different YouTube clients get captions in different situations, so try a few.
         var list: [[String: Any]] = []
-        for c in [ios, tv, web] {
+        for c in [ios, web] {
             if let json = try? await post("player", ["videoId": id], client: c),
                let l = YTParse.dig(json, "captions", "playerCaptionsTracklistRenderer", "captionTracks") as? [[String: Any]], !l.isEmpty {
                 list = l

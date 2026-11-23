@@ -176,6 +176,8 @@ final class PlayerModel: NSObject {
             }
         let s = await SponsorBlock.segments(v.id, categories: cats)
             if self.current?.id == v.id { self.segments = s }
+        // Captions are only looked up if you use them (fewer requests = less chance of YouTube's bot check).
+        guard AppSettings.shared.d.captionLanguage != nil else { updateNowPlaying(); return }
         let t = await InnerTube.shared.captionTracks(v.id)
             if self.current?.id == v.id {
                 self.captionTracks = t
@@ -300,7 +302,20 @@ final class PlayerModel: NSObject {
         }
     }
 
+    func loadCaptionTracks() async {
+        guard captionTracks.isEmpty, let v = current else { return }
+        let t = await InnerTube.shared.captionTracks(v.id)
+        if current?.id == v.id { captionTracks = t }
+    }
+
     func toggleCaptions() {
+        if captionTrack == nil && captionTracks.isEmpty {
+            Task { @MainActor in
+                await self.loadCaptionTracks()
+                if self.captionTracks.isEmpty { self.showToast("This video has no captions") } else { self.toggleCaptions() }
+            }
+            return
+        }
         if captionTrack != nil {
             selectCaption(nil)
         } else if let t = captionTracks.first(where: { $0.lang == (AppSettings.shared.d.captionLanguage ?? "en") }) ?? captionTracks.first(where: { !$0.auto }) ?? captionTracks.first {

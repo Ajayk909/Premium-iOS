@@ -860,6 +860,7 @@ struct PlayerSettingsPanel: View {
 
     @ViewBuilder
     private var captions: some View {
+        Color.clear.frame(height: 0).task { await p.loadCaptionTracks() }
         if p.captionTracks.isEmpty {
             NavRow(icon: "captions.bubble", title: "Captions", value: "None", chevron: false) {}
                 .disabled(true)
