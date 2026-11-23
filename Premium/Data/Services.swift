@@ -108,7 +108,7 @@ enum Streams {
     }
 
     static func load(_ id: String) async throws -> StreamSet {
-        let yt = YouTube(videoID: id, methods: [.local])
+        let yt = YouTube(videoID: id, methods: [.local, .remote])
         let streams = try await yt.streams
         let hls = try? await yt.livestreams.first?.url
         var best: [Int: (choice: VideoChoice, score: Int)] = [:]
