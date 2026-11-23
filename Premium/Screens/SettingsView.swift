@@ -122,7 +122,7 @@ struct SettingsView: View {
                 if let note { Text(note).font(.system(size: 12)).foregroundStyle(t.ink2) }
             }
         }
-        .tint(t.accent)
+        .tint(t.dark ? Color(hex: 0x8A7CF0) : t.accent)
         .padding(.horizontal, 16)
         .frame(minHeight: 54)
     }
@@ -243,7 +243,7 @@ struct AppearanceView: View {
                 Text(note).font(.system(size: 12)).foregroundStyle(t.ink2)
             }
         }
-        .tint(t.accent)
+        .tint(t.dark ? Color(hex: 0x8A7CF0) : t.accent)
         .padding(.horizontal, 16)
         .frame(minHeight: 58)
     }
