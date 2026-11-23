@@ -114,28 +114,30 @@ final class PlayerModel: NSObject {
         let cap = qualityCap
         let cats = AppSettings.shared.d.sponsorCategories
         loadTask = Task { @MainActor in
-            async let info = try? InnerTube.shared.details(v.id)
-            async let segs = SponsorBlock.segments(v.id, categories: cats)
-            async let tracks = InnerTube.shared.captionTracks(v.id)
+            // Details, SponsorBlock and captions load on their own so the page fills in right away.
+            Task { @MainActor in await self.loadExtras(v, cats: cats) }
             do {
                 var item: AVPlayerItem?
                 let set = try await Streams.load(v.id)
-                if !set.videos.isEmpty || set.progressive != nil || set.hls != nil {
-                    guard !Task.isCancelled, self.current?.id == v.id else { return }
-                    let choice = Streams.choose(set, height: cap, autoCap: autoCap)
-                    if let it = try? await Streams.item(set, choice: choice, audioOnly: audioOnly) {
-                        self.streamSet = set
-                        self.qualities = set.videos
-                        self.playingQuality = audioOnly ? nil : choice
-                        self.isHLS = false
-                        item = it
-                    }
-                }
-                if item == nil, let h = set.hls {
-                    item = AVPlayerItem(url: h)
+                guard !Task.isCancelled, self.current?.id == v.id else { return }
+                self.streamSet = set
+                if let h = set.hls, !audioOnly {
+                    // HLS: adaptive quality with sound, every resolution YouTube offers.
+                    let it = AVPlayerItem(url: h)
+                    if let cap { it.preferredMaximumResolution = CGSize(width: cap * 16 / 9 + 2, height: cap + 2) }
+                    else if autoCap < 1080 { it.preferredMaximumResolution = CGSize(width: autoCap * 16 / 9 + 2, height: autoCap + 2) }
+                    item = it
                     self.isHLS = true
-                    self.qualities = []
                     self.playingQuality = nil
+                    Task { @MainActor in
+                        let q = await Streams.hlsVariants(h)
+                        if self.current?.id == v.id { self.qualities = q }
+                    }
+                } else if let it = try? await Streams.item(set, choice: Streams.choose(set, height: cap, autoCap: autoCap), audioOnly: audioOnly) {
+                    item = it
+                    self.isHLS = false
+                    self.qualities = set.videos
+                    self.playingQuality = audioOnly ? nil : Streams.choose(set, height: cap, autoCap: autoCap)
                 }
                 guard let item else { throw YTError.noStream }
                 guard !Task.isCancelled, self.current?.id == v.id else { return }
@@ -153,8 +155,14 @@ final class PlayerModel: NSObject {
             } catch {
                 if !Task.isCancelled { self.error = "Couldn't play this video.\n" + ((error as? LocalizedError)?.errorDescription ?? String(describing: error)).prefix(160) }
             }
-            self.loading = false
-            if let d = await info, self.current?.id == v.id {
+            if self.current?.id == v.id { self.loading = false }
+            self.updateNowPlaying()
+        }
+    }
+
+    @MainActor
+    private func loadExtras(_ v: Video, cats: [String]) async {
+        if let d = try? await InnerTube.shared.details(v.id), self.current?.id == v.id {
                 self.details = d
                 var merged = v
                 if merged.title.isEmpty { merged.title = d.video.title }
@@ -166,9 +174,9 @@ final class PlayerModel: NSObject {
                 Library.shared.updateVideo(merged)
                 if let c = d.channel { Library.shared.updateChannel(c) }
             }
-            let s = await segs
+        let s = await SponsorBlock.segments(v.id, categories: cats)
             if self.current?.id == v.id { self.segments = s }
-            let t = await tracks
+        let t = await InnerTube.shared.captionTracks(v.id)
             if self.current?.id == v.id {
                 self.captionTracks = t
                 if let lang = AppSettings.shared.d.captionLanguage,
@@ -176,8 +184,7 @@ final class PlayerModel: NSObject {
                     self.selectCaption(match, remember: false)
                 }
             }
-            self.updateNowPlaying()
-        }
+        updateNowPlaying()
     }
 
     // MARK: Controls
@@ -272,7 +279,7 @@ final class PlayerModel: NSObject {
     func setQuality(_ height: Int?) {
         qualityCap = height
         if isHLS, let item = player.currentItem {
-            item.preferredMaximumResolution = height.map { CGSize(width: $0 * 16 / 9, height: $0) } ?? .zero
+            item.preferredMaximumResolution = height.map { CGSize(width: $0 * 16 / 9 + 2, height: $0 + 2) } ?? .zero
         } else {
             switchStreams()
         }

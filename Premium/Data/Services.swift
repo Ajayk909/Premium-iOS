@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import VideoToolbox
 import Speech
 import Observation
 import YouTubeKit
@@ -82,11 +83,34 @@ enum Streams {
     /// YouTube format codes that are 50/60 fps.
     private static let hfrTags: Set<Int> = [298, 299, 302, 303, 308, 315, 334, 335, 336, 337, 694, 695, 696, 697, 698, 699, 700, 701, 702]
 
+    /// Reads the HLS master playlist to list real qualities with their frame rates.
+    static func hlsVariants(_ url: URL) async -> [VideoChoice] {
+        guard let r = try? await URLSession.shared.data(from: url), let text = String(data: r.0, encoding: .utf8) else { return [] }
+        var best: [Int: VideoChoice] = [:]
+        for line in text.split(separator: "\n") where line.hasPrefix("#EXT-X-STREAM-INF:") {
+            let l = String(line)
+            guard let res = l.range(of: #"RESOLUTION=(\d+)x(\d+)"#, options: .regularExpression) else { continue }
+            let dims = l[res].replacingOccurrences(of: "RESOLUTION=", with: "").split(separator: "x").compactMap { Int($0) }
+            guard dims.count == 2 else { continue }
+            let h = min(dims[0], dims[1])
+            var fps = 30.0
+            if let fr = l.range(of: #"FRAME-RATE=[\d.]+"#, options: .regularExpression) {
+                fps = Double(l[fr].replacingOccurrences(of: "FRAME-RATE=", with: "")) ?? 30
+            }
+            let codecs = l.range(of: #"CODECS="[^"]*""#, options: .regularExpression).map { String(l[$0]) } ?? ""
+            if codecs.contains("vp09") && !VTIsHardwareDecodeSupported(kCMVideoCodecType_VP9) { continue }
+            if codecs.contains("av01") && !VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1) { continue }
+            let choice = VideoChoice(height: h, hfr: fps > 31, av1: codecs.contains("av01"), url: url)
+            if let cur = best[h], cur.hfr && !choice.hfr { continue }
+            best[h] = choice
+        }
+        return best.values.sorted { $0.height > $1.height }
+    }
+
     static func load(_ id: String) async throws -> StreamSet {
-        let yt = YouTube(videoID: id, methods: [.local, .remote])
-        let streams = (try? await yt.streams) ?? []
+        let yt = YouTube(videoID: id, methods: [.local])
+        let streams = try await yt.streams
         let hls = try? await yt.livestreams.first?.url
-        if streams.isEmpty && hls == nil { _ = try await yt.streams }
         var best: [Int: (choice: VideoChoice, score: Int)] = [:]
         for s in streams.filterVideoOnly() where s.isNativelyPlayable && s.fileExtension == .mp4 {
             guard let h = s.videoResolution else { continue }
@@ -146,12 +170,9 @@ enum Streams {
 
     /// Simple single-item helper used by Shorts.
     static func item(for id: String, audioOnly: Bool, maxHeight: Int) async throws -> AVPlayerItem {
-        do {
-            let set = try await load(id)
-            return try await item(set, choice: choose(set, height: nil, autoCap: maxHeight), audioOnly: audioOnly)
-        } catch {
-            return try await hlsFallback(id)
-        }
+        let set = try await load(id)
+        if !audioOnly, let h = set.hls { return AVPlayerItem(url: h) }
+        return try await item(set, choice: choose(set, height: nil, autoCap: maxHeight), audioOnly: audioOnly)
     }
 
     private static func compose(video: URL, audio: URL) async throws -> AVPlayerItem {
