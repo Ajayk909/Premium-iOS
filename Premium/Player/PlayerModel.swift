@@ -119,7 +119,8 @@ final class PlayerModel: NSObject {
             async let tracks = InnerTube.shared.captionTracks(v.id)
             do {
                 var item: AVPlayerItem?
-                if let set = try? await Streams.load(v.id), !set.videos.isEmpty || set.progressive != nil {
+                let set = try await Streams.load(v.id)
+                if !set.videos.isEmpty || set.progressive != nil || set.hls != nil {
                     guard !Task.isCancelled, self.current?.id == v.id else { return }
                     let choice = Streams.choose(set, height: cap, autoCap: autoCap)
                     if let it = try? await Streams.item(set, choice: choice, audioOnly: audioOnly) {
@@ -130,8 +131,8 @@ final class PlayerModel: NSObject {
                         item = it
                     }
                 }
-                if item == nil {
-                    item = try await Streams.hlsFallback(v.id)
+                if item == nil, let h = set.hls {
+                    item = AVPlayerItem(url: h)
                     self.isHLS = true
                     self.qualities = []
                     self.playingQuality = nil
@@ -150,7 +151,7 @@ final class PlayerModel: NSObject {
                 self.player.playImmediately(atRate: self.speed)
                 self.isPlaying = true
             } catch {
-                if !Task.isCancelled { self.error = (error as? LocalizedError)?.errorDescription ?? "Couldn't play this video." }
+                if !Task.isCancelled { self.error = "Couldn't play this video.\n" + ((error as? LocalizedError)?.errorDescription ?? String(describing: error)).prefix(160) }
             }
             self.loading = false
             if let d = await info, self.current?.id == v.id {
@@ -250,8 +251,11 @@ final class PlayerModel: NSObject {
         let at = time
         isHLS = true
         loading = true
+        let failure = player.currentItem?.error.map { String(describing: $0) } ?? ""
         Task { @MainActor in
-            if let item = try? await Streams.hlsFallback(v.id), self.current?.id == v.id {
+            let hlsURL: URL? = self.streamSet?.hls
+            let fallback: AVPlayerItem? = hlsURL.map { AVPlayerItem(url: $0) }
+            if let item = fallback, self.current?.id == v.id {
                 self.qualities = []
                 self.playingQuality = nil
                 self.attach(item)
@@ -259,7 +263,7 @@ final class PlayerModel: NSObject {
                 self.player.playImmediately(atRate: self.speed)
                 self.error = nil
             } else {
-                self.error = "This video couldn't be played right now."
+                self.error = "This video couldn't be played right now.\n" + failure.prefix(160)
             }
             self.loading = false
         }

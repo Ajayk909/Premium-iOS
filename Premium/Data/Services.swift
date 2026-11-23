@@ -71,6 +71,7 @@ struct StreamSet {
     var videos: [VideoChoice]
     var audio: URL?
     var progressive: URL?
+    var hls: URL?
     var availableAt: Date
 }
 
@@ -83,7 +84,9 @@ enum Streams {
 
     static func load(_ id: String) async throws -> StreamSet {
         let yt = YouTube(videoID: id, methods: [.local, .remote])
-        let streams = try await yt.streams
+        let streams = (try? await yt.streams) ?? []
+        let hls = try? await yt.livestreams.first?.url
+        if streams.isEmpty && hls == nil { _ = try await yt.streams }
         var best: [Int: (choice: VideoChoice, score: Int)] = [:]
         for s in streams.filterVideoOnly() where s.isNativelyPlayable && s.fileExtension == .mp4 {
             guard let h = s.videoResolution else { continue }
@@ -100,7 +103,7 @@ enum Streams {
         let progressive = streams.filterVideoAndAudio().filter { $0.isNativelyPlayable }.highestResolutionStream()?.url
         let available = streams.map(\.availableAt).max() ?? Date()
         return StreamSet(videos: best.values.map { $0.choice }.sorted { $0.height > $1.height },
-                         audio: audio, progressive: progressive, availableAt: available)
+                         audio: audio, progressive: progressive, hls: hls, availableAt: available)
     }
 
     /// Picks the quality: the one asked for, or Auto (best up to 1080p, or 480p with data saver).
@@ -129,10 +132,8 @@ enum Streams {
         if wait > 0 { try await Task.sleep(nanoseconds: UInt64(min(wait, 15) * 1_000_000_000)) }
         if audioOnly, let a = set.audio { return AVPlayerItem(asset: asset(a)) }
         if let choice, let a = set.audio, let item = try? await compose(video: choice.url, audio: a) { return item }
-        if let p = set.progressive {
-            let item = AVPlayerItem(asset: asset(p))
-            return item
-        }
+        if let h = set.hls { return AVPlayerItem(url: h) }
+        if let p = set.progressive { return AVPlayerItem(asset: asset(p)) }
         throw YTError.noStream
     }
 
