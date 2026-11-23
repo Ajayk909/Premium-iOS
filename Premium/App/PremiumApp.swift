@@ -35,7 +35,7 @@ struct RootView: View {
                     }
                     .safeAreaInset(edge: .bottom) { Color.clear.frame(height: tab == .shorts ? 0 : bottomSpace) }
                     .opacity(app.tab == tab ? 1 : 0)
-                    .allowsHitTesting(app.tab == tab)
+                    .allowsHitTesting(app.tab == tab && !player.expanded)
                 }
             }
 

@@ -182,7 +182,7 @@ struct HomeView: View {
         let upNext = player.queue.first ?? lib.d.watchLater.first
         return VStack(spacing: 12) {
             HStack(spacing: 12) {
-                widgetVideo(label: "Continue watching", video: continueVideo, playing: continueVideo?.id == player.current?.id, emptyText: "Videos you watch show up here")
+                widgetVideo(label: "Continue watching", video: continueVideo, playing: continueVideo != nil && continueVideo?.id == player.current?.id, emptyText: "Videos you watch show up here")
                 widgetVideo(label: player.queue.isEmpty ? "Watch later" : "Up next · Queue \(player.queue.count)", video: upNext, playing: false, emptyText: "Save videos with •••")
             }
             HStack(spacing: 12) {

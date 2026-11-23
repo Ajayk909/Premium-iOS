@@ -247,9 +247,12 @@ struct ShortCell: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
+            Color.black
             RemoteImage(urls: [video.thumbURL].compactMap { $0 })
                 .blur(radius: player.ready ? 0 : 8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             ShortSurface(player: player.player).opacity(player.ready ? 1 : 0)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .onTapGesture {
                     paused.toggle()
                     paused ? player.pause() : player.play()

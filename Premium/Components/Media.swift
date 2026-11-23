@@ -16,16 +16,18 @@ struct RemoteImage: View {
     @State private var image: UIImage?
 
     var body: some View {
-        ZStack {
-            Rectangle().fill(t.ink.opacity(0.08))
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: contentMode)
-                    .transition(.opacity)
+        Rectangle()
+            .fill(t.ink.opacity(0.08))
+            .overlay {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: contentMode)
+                        .transition(.opacity)
+                }
             }
-        }
-        .task(id: urls.first) { await load() }
+            .clipped()
+            .task(id: urls.first) { await load() }
     }
 
     private func load() async {
