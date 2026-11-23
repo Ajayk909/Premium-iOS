@@ -121,7 +121,8 @@ enum Streams {
     /// The separate HD streams (for 4K/8K and exact quality picks). Slower, so it runs in the background.
     static func load(_ yt: YouTube, hls known: URL?) async throws -> StreamSet {
         let streams = try await yt.streams
-        let hls = known ?? (try? await yt.livestreams.first?.url)
+        var hls = known
+        if hls == nil { hls = try? await yt.livestreams.first?.url }
         var best: [Int: (choice: VideoChoice, score: Int)] = [:]
         for s in streams.filterVideoOnly() where s.isNativelyPlayable && s.fileExtension == .mp4 {
             guard let h = s.videoResolution else { continue }
