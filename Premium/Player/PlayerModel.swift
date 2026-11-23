@@ -118,20 +118,25 @@ final class PlayerModel: NSObject {
             async let segs = SponsorBlock.segments(v.id, categories: cats)
             async let tracks = InnerTube.shared.captionTracks(v.id)
             do {
-                let item: AVPlayerItem
+                var item: AVPlayerItem?
                 if let set = try? await Streams.load(v.id), !set.videos.isEmpty || set.progressive != nil {
                     guard !Task.isCancelled, self.current?.id == v.id else { return }
-                    self.streamSet = set
-                    self.qualities = set.videos
                     let choice = Streams.choose(set, height: cap, autoCap: autoCap)
-                    self.playingQuality = audioOnly ? nil : choice
-                    item = try await Streams.item(set, choice: choice, audioOnly: audioOnly)
-                    self.isHLS = false
-                } else {
+                    if let it = try? await Streams.item(set, choice: choice, audioOnly: audioOnly) {
+                        self.streamSet = set
+                        self.qualities = set.videos
+                        self.playingQuality = audioOnly ? nil : choice
+                        self.isHLS = false
+                        item = it
+                    }
+                }
+                if item == nil {
                     item = try await Streams.hlsFallback(v.id)
                     self.isHLS = true
                     self.qualities = []
+                    self.playingQuality = nil
                 }
+                guard let item else { throw YTError.noStream }
                 guard !Task.isCancelled, self.current?.id == v.id else { return }
                 self.attach(item)
                 self.ambient = []
@@ -202,7 +207,14 @@ final class PlayerModel: NSObject {
 
     // MARK: Quality & captions
 
+    @ObservationIgnored private var statusObservation: NSKeyValueObservation?
+
     private func attach(_ item: AVPlayerItem) {
+        // If a stream fails after it starts, switch to YouTube's HLS feed automatically.
+        statusObservation = item.observe(\.status, options: [.new]) { [weak self] it, _ in
+            guard it.status == .failed else { return }
+            DispatchQueue.main.async { self?.fallBackToHLS() }
+        }
         let out = AVPlayerItemVideoOutput(pixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)])
         item.add(out)
         videoOutput = out
@@ -228,6 +240,26 @@ final class PlayerModel: NSObject {
                 if wasPlaying { self.player.playImmediately(atRate: self.speed) }
             } catch {
                 self.reload()
+            }
+            self.loading = false
+        }
+    }
+
+    private func fallBackToHLS() {
+        guard !isHLS, let v = current else { return }
+        let at = time
+        isHLS = true
+        loading = true
+        Task { @MainActor in
+            if let item = try? await Streams.hlsFallback(v.id), self.current?.id == v.id {
+                self.qualities = []
+                self.playingQuality = nil
+                self.attach(item)
+                if at > 1 { await self.player.seek(to: CMTime(seconds: at, preferredTimescale: 600)) }
+                self.player.playImmediately(atRate: self.speed)
+                self.error = nil
+            } else {
+                self.error = "This video couldn't be played right now."
             }
             self.loading = false
         }

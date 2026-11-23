@@ -110,12 +110,29 @@ enum Streams {
         return set.videos.first { $0.height <= cap } ?? set.videos.last
     }
 
+    /// YouTube's stream servers expect the same browser ID as the client that asked for the stream.
+    static func asset(_ url: URL) -> AVURLAsset {
+        let client = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "c" }?.value ?? ""
+        let ua: String
+        switch client {
+        case "TVHTML5": ua = "Mozilla/5.0 (SMART-TV; Linux; Tizen 2.4.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/2.4.0 TV Safari/538.1"
+        case "VISIONOS": ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15"
+        case "IOS": ua = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)"
+        case "ANDROID", "ANDROID_VR": ua = "com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip"
+        default: ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
+        }
+        return AVURLAsset(url: url, options: [AVURLAssetHTTPUserAgentKey: ua, AVURLAssetPreferPreciseDurationAndTimingKey: false])
+    }
+
     static func item(_ set: StreamSet, choice: VideoChoice?, audioOnly: Bool) async throws -> AVPlayerItem {
         let wait = set.availableAt.timeIntervalSinceNow
-        if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
-        if audioOnly, let a = set.audio { return AVPlayerItem(url: a) }
+        if wait > 0 { try await Task.sleep(nanoseconds: UInt64(min(wait, 15) * 1_000_000_000)) }
+        if audioOnly, let a = set.audio { return AVPlayerItem(asset: asset(a)) }
         if let choice, let a = set.audio, let item = try? await compose(video: choice.url, audio: a) { return item }
-        if let p = set.progressive { return AVPlayerItem(url: p) }
+        if let p = set.progressive {
+            let item = AVPlayerItem(asset: asset(p))
+            return item
+        }
         throw YTError.noStream
     }
 
@@ -137,9 +154,8 @@ enum Streams {
     }
 
     private static func compose(video: URL, audio: URL) async throws -> AVPlayerItem {
-        let opts = [AVURLAssetPreferPreciseDurationAndTimingKey: false]
-        let va = AVURLAsset(url: video, options: opts)
-        let aa = AVURLAsset(url: audio, options: opts)
+        let va = asset(video)
+        let aa = asset(audio)
         async let vTracks = va.loadTracks(withMediaType: .video)
         async let aTracks = aa.loadTracks(withMediaType: .audio)
         async let vDurLoad = va.load(.duration)

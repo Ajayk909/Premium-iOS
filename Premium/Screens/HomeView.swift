@@ -136,7 +136,7 @@ struct HomeView: View {
 
     private var greetingHeader: some View {
         HStack(alignment: .top) {
-            Greeting(line1: greetingLine, line2: "What's on tonight?")
+            Greeting(line1: greetingLine, line2: Calendar.current.component(.hour, from: Date()) >= 18 ? "What's on tonight?" : "What are we watching?")
             Spacer(minLength: 110)
         }
         .padding(.horizontal, 20)
