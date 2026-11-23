@@ -104,11 +104,16 @@ struct SubscriptionsView: View {
                 Text("Subscriptions").font(.system(size: 22, weight: .bold)).foregroundStyle(t.ink)
             }
             Spacer()
-            if !lib.d.subscriptions.isEmpty {
-                GlassIcon(system: "slider.horizontal.3") { manage = true }.padding(.top, 4)
-            }
+            Color.clear.frame(width: 104, height: 1)
         }
         .padding(.horizontal, 20)
+        .overlay(alignment: .bottomTrailing) {
+            if !lib.d.subscriptions.isEmpty {
+                Button("Manage") { manage = true }
+                    .font(.system(size: 14, weight: .semibold)).foregroundStyle(t.ink2)
+                    .frame(height: 44).padding(.trailing, 20)
+            }
+        }
         .padding(.top, 8)
     }
 

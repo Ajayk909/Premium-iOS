@@ -33,6 +33,9 @@ final class PlayerModel: NSObject {
     /// nil = Auto. Otherwise the highest picture height allowed (1080, 720, …).
     var qualityCap: Int?
     var isHLS = false
+    /// Every quality this iPhone can play for the current video, best first.
+    var qualities: [VideoChoice] = []
+    var playingQuality: VideoChoice?
     var captionTracks: [CaptionTrack] = []
     var captionTrack: CaptionTrack?
     var captionText: String?
@@ -52,6 +55,7 @@ final class PlayerModel: NSObject {
     @ObservationIgnored private let ciContext = CIContext(options: [.workingColorSpace: NSNull()])
     @ObservationIgnored private var sampling = false
     @ObservationIgnored private var cues: [Cue] = []
+    @ObservationIgnored private var streamSet: StreamSet?
 
     override init() {
         super.init()
@@ -80,6 +84,9 @@ final class PlayerModel: NSObject {
         details = nil
         segments = []
         captionTracks = []
+        qualities = []
+        playingQuality = nil
+        streamSet = nil
         captionTrack = nil
         captionText = nil
         cues = []
@@ -103,26 +110,31 @@ final class PlayerModel: NSObject {
         loading = true
         player.replaceCurrentItem(with: nil)
         let audioOnly = self.audioOnly
-        let maxHeight = qualityCap ?? (AppSettings.shared.d.dataSaver ? 480 : 1080)
+        let autoCap = AppSettings.shared.d.dataSaver ? 480 : 1080
+        let cap = qualityCap
         let cats = AppSettings.shared.d.sponsorCategories
         loadTask = Task { @MainActor in
             async let info = try? InnerTube.shared.details(v.id)
             async let segs = SponsorBlock.segments(v.id, categories: cats)
             async let tracks = InnerTube.shared.captionTracks(v.id)
             do {
-                let item = try await Streams.item(for: v.id, audioOnly: audioOnly, maxHeight: maxHeight)
-                guard !Task.isCancelled, self.current?.id == v.id else { return }
-                self.isHLS = (item.asset as? AVURLAsset)?.url.absoluteString.contains("m3u8") ?? false
-                if self.isHLS, let cap = self.qualityCap {
-                    item.preferredMaximumResolution = CGSize(width: cap * 16 / 9, height: cap)
-                } else if self.isHLS && !AppSettings.shared.d.dataSaver {
-                    item.preferredMaximumResolution = .zero
+                let item: AVPlayerItem
+                if let set = try? await Streams.load(v.id), !set.videos.isEmpty || set.progressive != nil {
+                    guard !Task.isCancelled, self.current?.id == v.id else { return }
+                    self.streamSet = set
+                    self.qualities = set.videos
+                    let choice = Streams.choose(set, height: cap, autoCap: autoCap)
+                    self.playingQuality = audioOnly ? nil : choice
+                    item = try await Streams.item(set, choice: choice, audioOnly: audioOnly)
+                    self.isHLS = false
+                } else {
+                    item = try await Streams.hlsFallback(v.id)
+                    self.isHLS = true
+                    self.qualities = []
                 }
-                let out = AVPlayerItemVideoOutput(pixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)])
-                item.add(out)
-                self.videoOutput = out
+                guard !Task.isCancelled, self.current?.id == v.id else { return }
+                self.attach(item)
                 self.ambient = []
-                self.player.replaceCurrentItem(with: item)
                 var start = seekTo ?? 0
                 if resume {
                     let saved = Library.shared.progress(v.id)
@@ -190,14 +202,45 @@ final class PlayerModel: NSObject {
 
     // MARK: Quality & captions
 
+    private func attach(_ item: AVPlayerItem) {
+        let out = AVPlayerItemVideoOutput(pixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)])
+        item.add(out)
+        videoOutput = out
+        player.replaceCurrentItem(with: item)
+    }
+
+    /// Switch quality (or audio-only) using the streams we already have, keeping your place.
+    private func switchStreams() {
+        guard let set = streamSet, let v = current else { reload(); return }
+        let at = time
+        let wasPlaying = isPlaying || loading
+        let autoCap = AppSettings.shared.d.dataSaver ? 480 : 1080
+        let choice = Streams.choose(set, height: qualityCap, autoCap: autoCap)
+        loading = true
+        loadTask?.cancel()
+        loadTask = Task { @MainActor in
+            do {
+                let item = try await Streams.item(set, choice: choice, audioOnly: self.audioOnly)
+                guard !Task.isCancelled, self.current?.id == v.id else { return }
+                self.attach(item)
+                self.playingQuality = self.audioOnly ? nil : choice
+                await self.player.seek(to: CMTime(seconds: at, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+                if wasPlaying { self.player.playImmediately(atRate: self.speed) }
+            } catch {
+                self.reload()
+            }
+            self.loading = false
+        }
+    }
+
     func setQuality(_ height: Int?) {
         qualityCap = height
         if isHLS, let item = player.currentItem {
             item.preferredMaximumResolution = height.map { CGSize(width: $0 * 16 / 9, height: $0) } ?? .zero
-            showToast(height.map { "Quality: up to \($0)p" } ?? "Quality: Auto")
         } else {
-            reload()
+            switchStreams()
         }
+        showToast(height.map { h in "Quality: \(qualities.first { $0.height == h }?.label ?? "\(h)p")" } ?? "Quality: Auto")
     }
 
     func selectCaption(_ track: CaptionTrack?, remember: Bool = true) {
@@ -280,7 +323,7 @@ final class PlayerModel: NSObject {
 
     func setAudioOnly(_ on: Bool) {
         audioOnly = on
-        reload()
+        switchStreams()
     }
 
     func setSleep(minutes: Int?) {
@@ -326,8 +369,10 @@ final class PlayerModel: NSObject {
     func next() {
         if !queue.isEmpty {
             play(queue.removeFirst(), expand: expanded)
-        } else if let n = details?.related.first {
+        } else if let n = details?.related.first(where: { $0.id != current?.id && !$0.isShort }) {
             play(n, expand: expanded)
+        } else {
+            showToast("Up next is still loading")
         }
     }
 
@@ -343,9 +388,10 @@ final class PlayerModel: NSObject {
     private func tick(_ t: CMTime) {
         guard current != nil else { return }
         let s = t.seconds
-        if s.isFinite { time = s }
-        if let d = player.currentItem?.duration.seconds, d.isFinite, d > 0 { duration = d }
-        isPlaying = player.rate > 0
+        if s.isFinite, s != time { time = s }
+        if let d = player.currentItem?.duration.seconds, d.isFinite, d > 0, d != duration { duration = d }
+        let playing = player.rate > 0
+        if playing != isPlaying { isPlaying = playing }
         tickCount += 1
         updateCaption()
         if tickCount % 2 == 0 { sampleAmbient() }

@@ -7,11 +7,18 @@ struct Surface: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var noGlass
     var radius: CGFloat
     var strong: Bool
+    /// Floating chrome (tab bar, mini player, pinned buttons) gets real blur and a shadow.
+    /// Cards inside scrolling lists get a cheap tinted fill so scrolling stays at full frame rate.
+    var chrome: Bool
 
     @ViewBuilder
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-        if t.glass && !noGlass {
+        if t.glass && !noGlass && !chrome {
+            content
+                .background(t.dark ? Color.white.opacity(strong ? 0.10 : 0.07) : Color.white.opacity(strong ? 0.85 : 0.6), in: shape)
+                .overlay(shape.strokeBorder(t.dark ? Color.white.opacity(0.08) : Color.white.opacity(0.9), lineWidth: 1))
+        } else if t.glass && !noGlass {
             content
                 .background(strong ? t.glassFillStrong : t.glassFill, in: shape)
                 .background(.ultraThinMaterial, in: shape)
@@ -32,8 +39,8 @@ struct Surface: ViewModifier {
 }
 
 extension View {
-    func surface(_ radius: CGFloat = 26, strong: Bool = false) -> some View {
-        modifier(Surface(radius: radius, strong: strong))
+    func surface(_ radius: CGFloat = 26, strong: Bool = false, chrome: Bool = false) -> some View {
+        modifier(Surface(radius: radius, strong: strong, chrome: chrome))
     }
 
     /// Thin rainbow border used for focus, "now playing" and the selected item.
@@ -60,48 +67,66 @@ extension View {
     }
 }
 
-/// Soft silk background: base gradient, four drifting blurred blobs and a faint rainbow light leak.
+/// Soft silk background: base gradient + blurred colour blobs + a faint rainbow light leak.
+/// The blobs are drawn once per theme into a small picture and scaled up, so they cost nothing per frame.
 struct Backdrop: View {
     @Environment(\.theme) private var t
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var drift = false
 
     var body: some View {
-        GeometryReader { g in
-            ZStack {
-                LinearGradient(colors: [t.bgTop, t.bgBottom], startPoint: .topLeading, endPoint: .bottomTrailing)
-                if t.blobOpacity > 0 {
-                    blob(0, x: -0.35, y: -0.30, g.size)
-                    blob(1, x: 0.45, y: 0.05, g.size)
-                    blob(2, x: -0.40, y: 0.42, g.size)
-                    blob(3, x: 0.40, y: 0.50, g.size)
-                    LinearGradient(colors: rainbow, startPoint: .leading, endPoint: .trailing)
-                        .frame(width: 520, height: 150)
-                        .rotationEffect(.degrees(-35))
-                        .blur(radius: 70)
-                        .opacity(t.dark ? 0.08 : 0.13)
-                        .offset(x: g.size.width * 0.42, y: -g.size.height * 0.33)
-                }
+        ZStack {
+            LinearGradient(colors: [t.bgTop, t.bgBottom], startPoint: .topLeading, endPoint: .bottomTrailing)
+            if t.blobOpacity > 0, let img = BackdropCache.image(for: t) {
+                Image(uiImage: img)
+                    .resizable()
+                    .interpolation(.medium)
             }
-            .frame(width: g.size.width, height: g.size.height)
-            .clipped()
         }
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+        .allowsHitTesting(false)
+    }
+}
+
+enum BackdropCache {
+    private static var store: [String: UIImage] = [:]
+
+    @MainActor
+    static func image(for t: Theme) -> UIImage? {
+        let key = "\(t.kind.rawValue)-\(t.dark)"
+        if let img = store[key] { return img }
+        let renderer = ImageRenderer(content: BlobLayer(t: t).frame(width: 180, height: 390))
+        renderer.scale = 1
+        let img = renderer.uiImage
+        store[key] = img
+        return img
+    }
+}
+
+private struct BlobLayer: View {
+    var t: Theme
+    var body: some View {
+        ZStack {
+            Color.clear
+            blob(0, x: -0.35, y: -0.30)
+            blob(1, x: 0.45, y: 0.05)
+            blob(2, x: -0.40, y: 0.42)
+            blob(3, x: 0.40, y: 0.50)
+            LinearGradient(colors: rainbow, startPoint: .leading, endPoint: .trailing)
+                .frame(width: 240, height: 70)
+                .rotationEffect(.degrees(-35))
+                .blur(radius: 30)
+                .opacity(t.dark ? 0.08 : 0.13)
+                .offset(x: 180 * 0.42, y: -390 * 0.33)
         }
+        .frame(width: 180, height: 390)
+        .clipped()
     }
 
-    private func blob(_ i: Int, x: CGFloat, y: CGFloat, _ size: CGSize) -> some View {
-        let dx: CGFloat = drift ? (i.isMultiple(of: 2) ? 40 : -40) : 0
-        let dy: CGFloat = drift ? (i < 2 ? 30 : -30) : 0
-        return Circle()
+    private func blob(_ i: Int, x: CGFloat, y: CGFloat) -> some View {
+        Circle()
             .fill(t.blobs[i])
-            .frame(width: 380, height: 380)
-            .scaleEffect(drift ? (i.isMultiple(of: 2) ? 1.06 : 0.94) : 1)
-            .blur(radius: 80)
+            .frame(width: 175, height: 175)
+            .blur(radius: 38)
             .opacity(t.blobOpacity)
-            .offset(x: size.width * x + dx, y: size.height * y + dy)
+            .offset(x: 180 * x, y: 390 * y)
     }
 }
 
@@ -109,9 +134,9 @@ struct Backdrop: View {
 struct PressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .brightness(configuration.isPressed ? 0.04 : 0)
-            .animation(Motion.press, value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .opacity(configuration.isPressed ? 0.9 : 1)
+            .animation(.spring(response: 0.2, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 
@@ -119,7 +144,7 @@ struct PressStyle: ButtonStyle {
 struct GlassIcon: View {
     @Environment(\.theme) private var t
     var system: String
-    var size: CGFloat = 38
+    var size: CGFloat = 44
     var tint: Color? = nil
     var action: () -> Void
 
@@ -129,7 +154,7 @@ struct GlassIcon: View {
                 .font(.system(size: size * 0.42, weight: .semibold))
                 .foregroundStyle(tint ?? t.ink)
                 .frame(width: size, height: size)
-                .surface(size / 2)
+                .surface(size / 2, chrome: true)
         }
         .buttonStyle(PressStyle())
     }

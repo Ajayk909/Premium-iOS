@@ -1,60 +1,42 @@
 import SwiftUI
 
-/// Big feed card. Glass themes: a rounded glass card. Classic: edge-to-edge like the YouTube kit.
+/// Big feed card: a wide thumbnail with the channel avatar, title and details under it.
+/// No box around it, so the thumbnail gets the whole width.
 struct VideoCard: View {
     @Environment(\.theme) private var t
     var video: Video
 
     var body: some View {
-        if t.glass { glassCard } else { classicCard }
-    }
-
-    private var glassCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button { PlayerModel.shared.play(video) } label: {
-                Thumbnail(video: video, radius: 18, large: true)
-            }
-            .buttonStyle(PressStyle())
-            info
-                .padding(.horizontal, 4)
-                .padding(.bottom, 2)
-        }
-        .padding(10)
-        .surface(26)
-        .padding(.horizontal, 16)
-    }
-
-    private var classicCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button { PlayerModel.shared.play(video) } label: {
-                Thumbnail(video: video, radius: 0, large: true)
+                Thumbnail(video: video, radius: t.glass ? 18 : 0, large: true)
             }
-            .buttonStyle(.plain)
-            info.padding(12)
-        }
-        .padding(.bottom, 8)
-    }
-
-    private var info: some View {
-        HStack(alignment: .top, spacing: 12) {
-            ChannelAvatarLink(video: video, size: 36)
-            Button { PlayerModel.shared.play(video) } label: {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(video.title)
-                        .font(.system(size: 15.5, weight: .semibold))
-                        .foregroundStyle(t.ink)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                    Text(video.meta)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(t.ink2)
-                        .lineLimit(1)
+            .buttonStyle(PressStyle())
+            .padding(.horizontal, t.glass ? 10 : 0)
+            HStack(alignment: .top, spacing: 12) {
+                ChannelAvatarLink(video: video, size: 38)
+                Button { PlayerModel.shared.play(video) } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(video.title)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(t.ink)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                        Text(video.meta)
+                            .font(.system(size: 13))
+                            .foregroundStyle(t.ink2)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .buttonStyle(.plain)
+                VideoMenu(video: video)
             }
-            .buttonStyle(.plain)
-            VideoMenu(video: video)
+            .padding(.leading, 14)
+            .padding(.trailing, 4)
+            .padding(.top, 10)
         }
+        .padding(.bottom, 14)
     }
 }
 
@@ -62,21 +44,21 @@ struct VideoCard: View {
 struct VideoRow: View {
     @Environment(\.theme) private var t
     var video: Video
-    var thumbWidth: CGFloat = 150
+    var thumbWidth: CGFloat = 168
     var onRemove: (() -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Thumbnail(video: video, radius: t.glass ? 13 : 8)
+            Thumbnail(video: video, radius: t.glass ? 12 : 8)
                 .frame(width: thumbWidth)
             VStack(alignment: .leading, spacing: 4) {
                 Text(video.title)
-                    .font(.system(size: 14.5, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(t.ink)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 Text(video.meta)
-                    .font(.system(size: 12))
+                    .font(.system(size: 12.5))
                     .foregroundStyle(t.ink2)
                     .lineLimit(2)
             }
@@ -84,17 +66,9 @@ struct VideoRow: View {
             .padding(.top, 2)
             VideoMenu(video: video, onRemove: onRemove)
         }
-        .padding(t.glass ? 8 : 0)
-        .modifier(RowSurface())
+        .padding(.vertical, 4)
         .contentShape(Rectangle())
         .onTapGesture { PlayerModel.shared.play(video) }
-    }
-}
-
-private struct RowSurface: ViewModifier {
-    @Environment(\.theme) private var t
-    @ViewBuilder func body(content: Content) -> some View {
-        if t.glass { content.surface(20) } else { content }
     }
 }
 
@@ -172,9 +146,9 @@ struct VideoMenu: View {
         } label: {
             Image(systemName: "ellipsis")
                 .rotationEffect(.degrees(90))
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(t.ink2)
-                .frame(width: 28, height: 30)
+                .frame(width: 40, height: 44)
                 .contentShape(Rectangle())
         }
     }

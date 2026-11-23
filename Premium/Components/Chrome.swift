@@ -16,12 +16,12 @@ struct TabBar: View {
                 let on = state.tab == tab
                 Button { state.select(tab) } label: {
                     VStack(spacing: 3) {
-                        Image(systemName: on ? tab.iconOn : tab.icon).font(.system(size: 19, weight: .semibold))
-                        Text(tab.title).font(.system(size: 10.5, weight: on ? .bold : .medium)).lineLimit(1).minimumScaleFactor(0.8)
+                        Image(systemName: on ? tab.iconOn : tab.icon).font(.system(size: 21, weight: .semibold))
+                        Text(tab.title).font(.system(size: 11, weight: on ? .bold : .medium)).lineLimit(1).minimumScaleFactor(0.8)
                     }
                     .foregroundStyle(on ? t.ink : t.ink2)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 52)
+                    .frame(height: 56)
                     .background {
                         if on {
                             Capsule()
@@ -36,7 +36,7 @@ struct TabBar: View {
             }
         }
         .padding(6)
-        .surface(32)
+        .surface(32, chrome: true)
         .padding(.horizontal, 20)
         .animation(Motion.spring, value: state.tab)
         .sensoryFeedback(.selection, trigger: state.tab)
@@ -94,44 +94,55 @@ struct MiniPlayer: View {
 
                 Button { p.toggle() } label: {
                     Image(systemName: p.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(t.ink)
-                        .frame(width: 40, height: 40)
+                        .frame(width: 46, height: 46)
                         .background(t.glass ? AnyShapeStyle(t.dark ? Color.white.opacity(0.15) : Color.white) : AnyShapeStyle(Color.clear), in: Circle())
                 }
                 .buttonStyle(PressStyle())
                 Button { p.close() } label: {
-                    Image(systemName: "xmark").font(.system(size: 15, weight: .semibold)).foregroundStyle(t.ink2).frame(width: 30, height: 40)
+                    Image(systemName: "xmark").font(.system(size: 17, weight: .semibold)).foregroundStyle(t.ink2).frame(width: 44, height: 46).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
             .padding(.leading, t.glass ? 7 : 0)
             .padding(.trailing, 8)
-            .frame(height: t.glass ? 62 : 56)
+            .frame(height: t.glass ? 66 : 60)
             .overlay(alignment: .bottom) {
-                ProgressLine(value: p.duration > 0 ? p.time / p.duration : 0, height: 2.5)
-                    .padding(.horizontal, t.glass ? 16 : 0)
+                MiniProgress().padding(.horizontal, t.glass ? 16 : 0)
             }
             .modifier(MiniSurface())
             .padding(.horizontal, t.glass ? 20 : 0)
-            .offset(y: max(-30, drag))
-            .opacity(1 - Double(max(0, drag)) / 160)
+            .offset(y: drag)
+            .scaleEffect(1 + max(0, -drag) / 900)
+            .opacity(1 - Double(max(0, drag)) / 140)
+            .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.85), value: drag)
             .contentShape(Rectangle())
             .onTapGesture { withAnimation(Motion.spring) { p.expanded = true } }
-            .gesture(
-                DragGesture(minimumDistance: 8)
-                    .onChanged { drag = $0.translation.height }
+            // Swipe up opens the player, swipe down closes it.
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 10)
+                    .onChanged { g in drag = max(-120, g.translation.height) }
                     .onEnded { g in
-                        if g.translation.height > 60 || g.predictedEndTranslation.height > 140 {
+                        let dy = g.translation.height, pred = g.predictedEndTranslation.height
+                        if dy > 45 || pred > 120 {
                             p.close()
-                        } else if g.translation.height < -40 {
+                        } else if dy < -30 || pred < -90 {
                             withAnimation(Motion.spring) { p.expanded = true }
                         }
-                        withAnimation(Motion.spring) { drag = 0 }
+                        drag = 0
                     }
             )
+            .sensoryFeedback(.impact(weight: .light), trigger: p.expanded)
             .transition(.move(edge: .bottom).combined(with: .opacity))
         }
+    }
+}
+
+private struct MiniProgress: View {
+    var p = PlayerModel.shared
+    var body: some View {
+        ProgressLine(value: p.duration > 0 ? p.time / p.duration : 0, height: 2.5)
     }
 }
 
@@ -139,7 +150,7 @@ private struct MiniSurface: ViewModifier {
     @Environment(\.theme) private var t
     @ViewBuilder func body(content: Content) -> some View {
         if t.glass {
-            content.surface(22, strong: true)
+            content.surface(22, strong: true, chrome: true)
         } else {
             content.background(Color.white).overlay(alignment: .top) { Rectangle().fill(t.divider).frame(height: 0.5) }
         }

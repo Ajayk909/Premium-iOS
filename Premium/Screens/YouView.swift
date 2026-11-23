@@ -46,6 +46,8 @@ struct YouView: View {
                     }
                     divider
                     row("tv", "Cast to TV", Roku.shared.current?.name ?? "Set up") { AppState.shared.showCast = true }
+                    divider
+                    row("gearshape", "Settings", "") { AppState.shared.push(.settings) }
                 }
                 .modifier(ListCard())
             }
@@ -70,8 +72,7 @@ struct YouView: View {
                 Text("\(lib.d.subscriptions.count) subscriptions · \(lib.d.history.count) watched")
                     .font(.system(size: 13)).foregroundStyle(t.ink2)
             }
-            Spacer()
-            GlassIcon(system: "gearshape") { AppState.shared.push(.settings) }
+            Spacer(minLength: 104)
         }
         .padding(.horizontal, 20)
         .padding(.top, 8)

@@ -46,57 +46,116 @@ enum SponsorBlock {
 
 // MARK: - Streams
 
+/// One picture quality the iPhone can play natively.
+struct VideoChoice: Identifiable, Hashable {
+    var height: Int
+    var hfr: Bool
+    var av1: Bool
+    var url: URL
+    var id: Int { height }
+
+    var label: String {
+        let base: String
+        switch height {
+        case 4320...: base = "8K"
+        case 2160...: base = "4K"
+        case 1440...: base = "1440p"
+        default: base = "\(height)p"
+        }
+        return base + (hfr ? "60" : "")
+    }
+}
+
+/// Everything we found for a video, kept so quality changes are instant (no new lookup).
+struct StreamSet {
+    var videos: [VideoChoice]
+    var audio: URL?
+    var progressive: URL?
+    var availableAt: Date
+}
+
 /// Turns a video ID into something AVPlayer can play, using YouTubeKit.
+/// We use the separate video + audio streams (same as YouTube's own app), never the HLS feed,
+/// which can carry stitched-in ads.
 enum Streams {
-    static func item(for id: String, audioOnly: Bool, maxHeight: Int) async throws -> AVPlayerItem {
+    /// YouTube format codes that are 50/60 fps.
+    private static let hfrTags: Set<Int> = [298, 299, 302, 303, 308, 315, 334, 335, 336, 337, 694, 695, 696, 697, 698, 699, 700, 701, 702]
+
+    static func load(_ id: String) async throws -> StreamSet {
         let yt = YouTube(videoID: id, methods: [.local, .remote])
-
-        // 1. HLS: adaptive quality with sound, best for AVPlayer.
-        if !audioOnly, let hls = try? await yt.livestreams.first {
-            let item = AVPlayerItem(url: hls.url)
-            item.preferredMaximumResolution = CGSize(width: maxHeight * 16 / 9, height: maxHeight)
-            return item
-        }
-
         let streams = try await yt.streams
-
-        if audioOnly, let a = streams.filterAudioOnly().filter({ $0.isNativelyPlayable }).highestAudioBitrateStream() {
-            try? await a.waitUntilAvailable()
-            return AVPlayerItem(url: a.url)
+        var best: [Int: (choice: VideoChoice, score: Int)] = [:]
+        for s in streams.filterVideoOnly() where s.isNativelyPlayable && s.fileExtension == .mp4 {
+            guard let h = s.videoResolution else { continue }
+            let tag = URLComponents(url: s.url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "itag" }?.value.flatMap(Int.init) ?? 0
+            let av1: Bool
+            if case .some(.av1) = s.videoCodec { av1 = true } else { av1 = false }
+            let hfr = hfrTags.contains(tag)
+            let score = (hfr ? 1_000_000_000 : 0) + (av1 ? 100_000_000 : 0) + (s.bitrate ?? s.averageBitrate ?? 0)
+            if best[h] == nil || score > best[h]!.score {
+                best[h] = (VideoChoice(height: h, hfr: hfr, av1: av1, url: s.url), score)
+            }
         }
+        let audio = streams.filterAudioOnly().filter { $0.isNativelyPlayable }.highestAudioBitrateStream()?.url
+        let progressive = streams.filterVideoAndAudio().filter { $0.isNativelyPlayable }.highestResolutionStream()?.url
+        let available = streams.map(\.availableAt).max() ?? Date()
+        return StreamSet(videos: best.values.map { $0.choice }.sorted { $0.height > $1.height },
+                         audio: audio, progressive: progressive, availableAt: available)
+    }
 
-        // 2. Separate HD video + audio, joined into one item.
-        let video = streams.filterVideoOnly()
-            .filter { $0.isNativelyPlayable && $0.fileExtension == .mp4 && ($0.videoResolution ?? 0) <= maxHeight }
-            .highestResolutionStream()
-        let audio = streams.filterAudioOnly().filter { $0.isNativelyPlayable }.highestAudioBitrateStream()
-        if let video, let audio {
-            try? await video.waitUntilAvailable()
-            if let item = try? await compose(video: video.url, audio: audio.url) { return item }
-        }
+    /// Picks the quality: the one asked for, or Auto (best up to 1080p, or 480p with data saver).
+    static func choose(_ set: StreamSet, height: Int?, autoCap: Int) -> VideoChoice? {
+        if let height, let exact = set.videos.first(where: { $0.height == height }) { return exact }
+        let cap = height ?? autoCap
+        return set.videos.first { $0.height <= cap } ?? set.videos.last
+    }
 
-        // 3. Single file with video and sound (usually 360p).
-        if let p = streams.filterVideoAndAudio().filter({ $0.isNativelyPlayable }).highestResolutionStream() {
-            try? await p.waitUntilAvailable()
-            return AVPlayerItem(url: p.url)
-        }
+    static func item(_ set: StreamSet, choice: VideoChoice?, audioOnly: Bool) async throws -> AVPlayerItem {
+        let wait = set.availableAt.timeIntervalSinceNow
+        if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
+        if audioOnly, let a = set.audio { return AVPlayerItem(url: a) }
+        if let choice, let a = set.audio, let item = try? await compose(video: choice.url, audio: a) { return item }
+        if let p = set.progressive { return AVPlayerItem(url: p) }
         throw YTError.noStream
     }
 
+    /// Last resort: YouTube's HLS feed.
+    static func hlsFallback(_ id: String) async throws -> AVPlayerItem {
+        let yt = YouTube(videoID: id, methods: [.local, .remote])
+        guard let hls = try await yt.livestreams.first else { throw YTError.noStream }
+        return AVPlayerItem(url: hls.url)
+    }
+
+    /// Simple single-item helper used by Shorts.
+    static func item(for id: String, audioOnly: Bool, maxHeight: Int) async throws -> AVPlayerItem {
+        do {
+            let set = try await load(id)
+            return try await item(set, choice: choose(set, height: nil, autoCap: maxHeight), audioOnly: audioOnly)
+        } catch {
+            return try await hlsFallback(id)
+        }
+    }
+
     private static func compose(video: URL, audio: URL) async throws -> AVPlayerItem {
-        let va = AVURLAsset(url: video)
-        let aa = AVURLAsset(url: audio)
-        guard let vt = try await va.loadTracks(withMediaType: .video).first,
-              let at = try await aa.loadTracks(withMediaType: .audio).first else { throw YTError.noStream }
-        let vDur = try await va.load(.duration)
-        let aDur = try await aa.load(.duration)
+        let opts = [AVURLAssetPreferPreciseDurationAndTimingKey: false]
+        let va = AVURLAsset(url: video, options: opts)
+        let aa = AVURLAsset(url: audio, options: opts)
+        async let vTracks = va.loadTracks(withMediaType: .video)
+        async let aTracks = aa.loadTracks(withMediaType: .audio)
+        async let vDurLoad = va.load(.duration)
+        async let aDurLoad = aa.load(.duration)
+        guard let vt = try await vTracks.first, let at = try await aTracks.first else { throw YTError.noStream }
+        let vDur = try await vDurLoad
+        let aDur = try await aDurLoad
         let comp = AVMutableComposition()
         let cv = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
         let ca = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
         try cv?.insertTimeRange(CMTimeRange(start: .zero, duration: vDur), of: vt, at: .zero)
         try ca?.insertTimeRange(CMTimeRange(start: .zero, duration: CMTimeMinimum(vDur, aDur)), of: at, at: .zero)
         cv?.preferredTransform = try await vt.load(.preferredTransform)
-        return AVPlayerItem(asset: comp)
+        let item = AVPlayerItem(asset: comp)
+        item.preferredForwardBufferDuration = 8
+        return item
     }
 }
 

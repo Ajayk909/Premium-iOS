@@ -29,6 +29,7 @@ targets:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+        CADisableMinimumFrameDurationOnPhone: true
         UIBackgroundModes:
           - audio
         NSAppTransportSecurity:

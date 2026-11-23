@@ -23,8 +23,8 @@ struct RootView: View {
     var body: some View {
         let theme = settings.currentTheme(at: now)
         let showMini = player.current != nil && !player.expanded && app.tab != .shorts
-        let showSearchBar = app.tab == .home && player.current == nil && (app.paths[.home] ?? []).isEmpty && theme.glass
-        let bottomSpace: CGFloat = 76 + (showMini ? 72 : 0) + (showSearchBar ? 66 : 0)
+        let bottomSpace: CGFloat = 80 + (showMini ? 76 : 0)
+        let pinnedSearch = app.tab != .shorts && (app.paths[app.tab] ?? []).isEmpty && !player.expanded
 
         ZStack(alignment: .bottom) {
             ZStack {
@@ -40,7 +40,6 @@ struct RootView: View {
             }
 
             VStack(spacing: 10) {
-                if showSearchBar { HomeSearchBar().transition(.move(edge: .bottom).combined(with: .opacity)) }
                 if showMini { MiniPlayer() }
                 if !player.expanded { TabBar() }
             }
@@ -51,6 +50,18 @@ struct RootView: View {
                 WatchView()
                     .transition(.move(edge: .bottom))
                     .zIndex(2)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            // Search and profile stay pinned while you scroll, on every main tab.
+            if pinnedSearch {
+                HStack(spacing: 8) {
+                    GlassIcon(system: "magnifyingglass") { app.push(.search(nil)) }
+                    GlassIcon(system: "person.fill") { app.push(.settings) }
+                }
+                .padding(.trailing, 16)
+                .padding(.top, 4)
+                .transition(.opacity)
             }
         }
         .overlay(alignment: .top) {

@@ -20,6 +20,12 @@ final class Library {
     static let shared = Library()
 
     private(set) var d: LibraryData
+    /// Watch progress and watch time change every few seconds while a video plays. They're kept
+    /// out of observation so the feed doesn't redraw; only the stats views watch `statsVersion`.
+    @ObservationIgnored private var progressMap: [String: Double] = [:]
+    @ObservationIgnored private var watchSecondsMap: [String: Double] = [:]
+    @ObservationIgnored private var channelSecondsMap: [String: Double] = [:]
+    var statsVersion = 0
     @ObservationIgnored private var saveWork: DispatchWorkItem?
     private let url: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -28,28 +34,52 @@ final class Library {
     }()
 
     init() {
+        var loaded = LibraryData()
         if let data = try? Data(contentsOf: url), let decoded = try? JSONDecoder().decode(LibraryData.self, from: data) {
-            d = decoded
-        } else {
-            d = LibraryData()
+            loaded = decoded
         }
+        progressMap = loaded.progress
+        watchSecondsMap = loaded.watchSeconds
+        channelSecondsMap = loaded.channelSeconds
+        loaded.progress = [:]
+        loaded.watchSeconds = [:]
+        loaded.channelSeconds = [:]
+        d = loaded
+    }
+
+    private func snapshot() -> LibraryData {
+        var copy = d
+        copy.progress = progressMap
+        copy.watchSeconds = watchSecondsMap
+        copy.channelSeconds = channelSecondsMap
+        return copy
     }
 
     private func save() {
         saveWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            guard let self, let data = try? JSONEncoder().encode(self.d) else { return }
-            try? data.write(to: self.url, options: .atomic)
+            guard let self else { return }
+            let copy = self.snapshot()
+            DispatchQueue.global(qos: .utility).async {
+                if let data = try? JSONEncoder().encode(copy) { try? data.write(to: self.url, options: .atomic) }
+            }
         }
         saveWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
     }
 
-    func exportData() -> Data { (try? JSONEncoder().encode(d)) ?? Data() }
+    func exportData() -> Data { (try? JSONEncoder().encode(snapshot())) ?? Data() }
 
     func importData(_ data: Data) -> Bool {
-        guard let decoded = try? JSONDecoder().decode(LibraryData.self, from: data) else { return false }
+        guard var decoded = try? JSONDecoder().decode(LibraryData.self, from: data) else { return false }
+        progressMap = decoded.progress
+        watchSecondsMap = decoded.watchSeconds
+        channelSecondsMap = decoded.channelSeconds
+        decoded.progress = [:]
+        decoded.watchSeconds = [:]
+        decoded.channelSeconds = [:]
         d = decoded
+        statsVersion += 1
         save()
         return true
     }
@@ -90,19 +120,19 @@ final class Library {
         if let i = d.history.firstIndex(where: { $0.id == v.id }) { d.history[i] = v; save() }
     }
 
-    func clearHistory() { d.history = []; d.progress = [:]; save() }
+    func clearHistory() { d.history = []; progressMap = [:]; save() }
 
     func removeHistory(_ id: String) { d.history.removeAll { $0.id == id }; save() }
 
-    func progress(_ id: String) -> Double { d.progress[id] ?? 0 }
+    func progress(_ id: String) -> Double { progressMap[id] ?? 0 }
 
     func setProgress(_ id: String, _ seconds: Double?) {
-        d.progress[id] = seconds
+        progressMap[id] = seconds
         save()
     }
 
     func progressFraction(_ v: Video) -> Double? {
-        guard let p = d.progress[v.id], p > 5, let total = v.durationSeconds, total > 0 else { return nil }
+        guard let p = progressMap[v.id], p > 5, let total = v.durationSeconds, total > 0 else { return nil }
         return min(1, p / Double(total))
     }
 
@@ -115,26 +145,29 @@ final class Library {
 
     func addWatch(_ seconds: Double, channel: String?) {
         let key = Library.dayFormatter.string(from: Date())
-        d.watchSeconds[key, default: 0] += seconds
-        if let channel, !channel.isEmpty { d.channelSeconds[channel, default: 0] += seconds }
+        watchSecondsMap[key, default: 0] += seconds
+        if let channel, !channel.isEmpty { channelSecondsMap[channel, default: 0] += seconds }
+        statsVersion += 1
         save()
     }
 
     /// Seconds watched on each of the last 7 days, oldest first.
     var lastSevenDays: [(label: String, seconds: Double, today: Bool)] {
+        _ = statsVersion
         let cal = Calendar.current
         let letter = DateFormatter()
         letter.dateFormat = "EEEEE"
         return (0..<7).reversed().map { back in
             let day = cal.date(byAdding: .day, value: -back, to: Date())!
-            return (letter.string(from: day), d.watchSeconds[Library.dayFormatter.string(from: day)] ?? 0, back == 0)
+            return (letter.string(from: day), watchSecondsMap[Library.dayFormatter.string(from: day)] ?? 0, back == 0)
         }
     }
 
     var weekTotal: Double { lastSevenDays.reduce(0) { $0 + $1.seconds } }
 
     var topChannels: [(String, Double)] {
-        d.channelSeconds.sorted { $0.value > $1.value }.prefix(5).map { ($0.key, $0.value) }
+        _ = statsVersion
+        return channelSecondsMap.sorted { $0.value > $1.value }.prefix(5).map { ($0.key, $0.value) }
     }
 
     // MARK: Lists

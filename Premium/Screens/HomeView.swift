@@ -137,19 +137,7 @@ struct HomeView: View {
     private var greetingHeader: some View {
         HStack(alignment: .top) {
             Greeting(line1: greetingLine, line2: "What's on tonight?")
-            Spacer(minLength: 12)
-            HStack(spacing: 8) {
-                GlassIcon(system: "magnifyingglass") { AppState.shared.push(.search(nil)) }
-                Button { AppState.shared.push(.settings) } label: {
-                    Image(systemName: "person.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(t.ink)
-                        .frame(width: 38, height: 38)
-                        .surface(19)
-                }
-                .buttonStyle(PressStyle())
-            }
-            .padding(.top, 4)
+            Spacer(minLength: 110)
         }
         .padding(.horizontal, 20)
         .padding(.top, 8)
@@ -163,9 +151,7 @@ struct HomeView: View {
                 Text("Premium").font(.system(size: 20, weight: .bold)).tracking(-0.8).foregroundStyle(t.ink)
             }
             Spacer()
-            Button { AppState.shared.showCast = true } label: { Image(systemName: "tv") }
-            Button { AppState.shared.push(.search(nil)) } label: { Image(systemName: "magnifyingglass") }
-            Button { AppState.shared.push(.settings) } label: { Image(systemName: "person.crop.circle") }
+            Color.clear.frame(width: 100, height: 1)
         }
         .font(.system(size: 20))
         .foregroundStyle(t.ink)

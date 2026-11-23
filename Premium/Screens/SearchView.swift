@@ -76,8 +76,8 @@ struct SearchView: View {
             }
             .font(.system(size: 16))
             .padding(.horizontal, 14)
-            .frame(height: 44)
-            .surface(22, strong: true)
+            .frame(height: 46)
+            .surface(23, strong: true, chrome: true)
             Button(action: startVoice) {
                 Image(systemName: "mic.fill")
                     .font(.system(size: 16, weight: .semibold))
