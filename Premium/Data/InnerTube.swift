@@ -28,17 +28,35 @@ final class InnerTube {
 
     private var region: String { Locale.current.region?.identifier ?? "CA" }
 
-    private func post(_ endpoint: String, _ body: [String: Any]) async throws -> [String: Any] {
+    private struct Client {
+        var name: String
+        var version: String
+        var id: String
+        var userAgent: String
+        var extra: [String: String] = [:]
+    }
+
+    private var web: Client { Client(name: "WEB", version: clientVersion, id: "1", userAgent: userAgent) }
+    private let ios = Client(name: "IOS", version: "20.10.4", id: "5",
+                             userAgent: "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
+                             extra: ["deviceMake": "Apple", "deviceModel": "iPhone16,2", "osName": "iPhone", "osVersion": "18.3.2.22D82"])
+    private let tv = Client(name: "TVHTML5", version: "7.20250923.13.00", id: "7",
+                            userAgent: "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)")
+
+    private func post(_ endpoint: String, _ body: [String: Any], client: Client? = nil) async throws -> [String: Any] {
+        let c = client ?? web
         var req = URLRequest(url: URL(string: "https://www.youtube.com/youtubei/v1/\(endpoint)?prettyPrint=false")!)
         req.httpMethod = "POST"
         var payload = body
-        payload["context"] = ["client": ["clientName": "WEB", "clientVersion": clientVersion, "hl": "en", "gl": region]]
+        var ctx: [String: Any] = ["clientName": c.name, "clientVersion": c.version, "hl": "en", "gl": region]
+        for (k, v) in c.extra { ctx[k] = v }
+        payload["context"] = ["client": ctx]
         req.httpBody = try JSONSerialization.data(withJSONObject: payload)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("1", forHTTPHeaderField: "X-YouTube-Client-Name")
-        req.setValue(clientVersion, forHTTPHeaderField: "X-YouTube-Client-Version")
+        req.setValue(c.id, forHTTPHeaderField: "X-YouTube-Client-Name")
+        req.setValue(c.version, forHTTPHeaderField: "X-YouTube-Client-Version")
         req.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
-        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue(c.userAgent, forHTTPHeaderField: "User-Agent")
         req.setValue("SOCS=CAI", forHTTPHeaderField: "Cookie")
         let (data, _) = try await session.data(for: req)
         guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw YTError.badResponse }
@@ -103,8 +121,15 @@ final class InnerTube {
     // MARK: Captions
 
     func captionTracks(_ id: String) async -> [CaptionTrack] {
-        guard let json = try? await post("player", ["videoId": id]),
-              let list = YTParse.dig(json, "captions", "playerCaptionsTracklistRenderer", "captionTracks") as? [[String: Any]] else { return [] }
+        // Different YouTube clients get captions in different situations, so try a few.
+        var list: [[String: Any]] = []
+        for c in [ios, tv, web] {
+            if let json = try? await post("player", ["videoId": id], client: c),
+               let l = YTParse.dig(json, "captions", "playerCaptionsTracklistRenderer", "captionTracks") as? [[String: Any]], !l.isEmpty {
+                list = l
+                break
+            }
+        }
         return list.compactMap { t in
             guard let url = t["baseUrl"] as? String else { return nil }
             let lang = t["languageCode"] as? String ?? ""
@@ -115,7 +140,7 @@ final class InnerTube {
     }
 
     func cues(_ track: CaptionTrack) async -> [Cue] {
-        guard let url = URL(string: track.url + "&fmt=json3"),
+        guard let url = URL(string: track.url.replacingOccurrences(of: "&fmt=srv3", with: "") + "&fmt=json3"),
               let result = try? await session.data(from: url),
               let json = try? JSONSerialization.jsonObject(with: result.0) as? [String: Any],
               let events = json["events"] as? [[String: Any]] else { return [] }

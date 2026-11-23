@@ -251,11 +251,20 @@ struct WatchView: View {
 
 private struct SheetSurface: ViewModifier {
     @Environment(\.theme) private var t
+    private var ambientOn: Bool { AppSettings.shared.d.ambient }
     @ViewBuilder func body(content: Content) -> some View {
         if t.glass {
             content
-                .background(t.glassFillStrong)
-                .background(.ultraThinMaterial)
+                .background {
+                    // The top of the sheet is see-through so ambient light from the video glows under the title.
+                    ZStack {
+                        Rectangle().fill(.ultraThinMaterial)
+                        Rectangle().fill(t.glassFillStrong)
+                    }
+                    .mask(LinearGradient(stops: [.init(color: .black.opacity(ambientOn ? 0.15 : 1), location: 0),
+                                                 .init(color: .black, location: ambientOn ? 0.32 : 0)],
+                                         startPoint: .top, endPoint: .bottom))
+                }
                 .clipShape(UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30, style: .continuous))
                 .overlay(
                     UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30, style: .continuous)
@@ -706,7 +715,7 @@ struct AmbientGlow: View {
                         Circle()
                             .fill(colors[i])
                             .frame(width: w * 0.95, height: w * 0.95)
-                            .offset(x: (i % 2 == 0 ? -1 : 1) * w * 0.28, y: (i < 2 ? 0.05 : 0.42) * w)
+                            .offset(x: (i % 2 == 0 ? -1 : 1) * w * 0.28, y: (i < 2 ? 0.1 : 0.6) * w)
                     }
                 } else {
                     Thumbnail(video: fallback, radius: 0)
@@ -714,7 +723,7 @@ struct AmbientGlow: View {
                         .scaleEffect(1.5)
                 }
             }
-            .frame(width: w, height: w * 1.15, alignment: .top)
+            .frame(width: w, height: w * 1.5, alignment: .top)
             .blur(radius: 60)
             .opacity((dark ? 0.85 : 0.7) * (0.25 + strength * 0.75))
             .mask(LinearGradient(colors: [.black, .black, .clear], startPoint: .top, endPoint: .bottom))
