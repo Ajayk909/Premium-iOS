@@ -1,0 +1,55 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    env:
+      APPETIZE_TOKEN: ${{ secrets.APPETIZE_TOKEN }}
+      APPETIZE_APP: ${{ secrets.APPETIZE_APP }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build for the iOS Simulator (Appetize)
+        run: |
+          set -o pipefail
+          xcodebuild -project Premium.xcodeproj -scheme Premium -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee sim.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || (grep -E "error:" sim.log | head -60; exit 1)
+          cd build/Build/Products/Release-iphonesimulator && zip -qr "$GITHUB_WORKSPACE/Premium-simulator.zip" Premium.app
+
+      - name: Build for iPhone (unsigned .ipa for sideloading)
+        run: |
+          set -o pipefail
+          xcodebuild -project Premium.xcodeproj -scheme Premium -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build-device \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build 2>&1 | tee device.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)"
+          mkdir -p Payload && cp -R build-device/Build/Products/Release-iphoneos/Premium.app Payload/
+          zip -qr Premium-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Premium-simulator
+          path: Premium-simulator.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Premium-unsigned-ipa
+          path: Premium-unsigned.ipa
+
+      - name: Upload to Appetize (if a token is set)
+        if: env.APPETIZE_TOKEN != ''
+        run: |
+          URL="https://api.appetize.io/v1/apps"
+          [ -n "$APPETIZE_APP" ] && URL="$URL/$APPETIZE_APP"
+          curl -sS -X POST "$URL" -H "X-API-KEY: $APPETIZE_TOKEN" -F "file=@Premium-simulator.zip" -F "platform=ios" | tee appetize.json
