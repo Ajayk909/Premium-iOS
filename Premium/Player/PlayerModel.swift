@@ -26,7 +26,7 @@ final class PlayerModel: NSObject {
     var toast: String?
     var pipActive = false
 
-    @ObservationIgnored let player = AVPlayer()
+    let player = AVPlayer()
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var loadTask: Task<Void, Never>?
     @ObservationIgnored private var pip: AVPictureInPictureController?

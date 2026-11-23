@@ -5,7 +5,7 @@ import Observation
 /// Each Short gets its own small player so the next one can load while you watch.
 @Observable
 final class ShortPlayer {
-    @ObservationIgnored let player = AVPlayer()
+    let player = AVPlayer()
     var ready = false
     var progress: Double = 0
     @ObservationIgnored private var loadedID: String?

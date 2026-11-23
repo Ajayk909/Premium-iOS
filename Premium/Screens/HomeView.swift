@@ -219,7 +219,7 @@ struct HomeView: View {
 
     private var weekWidget: some View {
         let days = lib.lastSevenDays
-        let maxS = max(days.map(\.seconds).max() ?? 1, 1)
+        let maxS = max(days.map { $0.seconds }.max() ?? 1, 1)
         return Button { AppState.shared.push(.stats) } label: {
             VStack(alignment: .leading, spacing: 6) {
                 CardLabel(text: "This week")

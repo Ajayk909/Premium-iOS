@@ -21,7 +21,7 @@ final class Library {
 
     private(set) var d: LibraryData
     @ObservationIgnored private var saveWork: DispatchWorkItem?
-    @ObservationIgnored private let url: URL = {
+    private let url: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("library.json")

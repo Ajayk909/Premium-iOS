@@ -232,10 +232,10 @@ final class VoiceSearch {
     var level: CGFloat = 0
     var denied = false
 
-    @ObservationIgnored private let engine = AVAudioEngine()
+    private let engine = AVAudioEngine()
     @ObservationIgnored private var request: SFSpeechAudioBufferRecognitionRequest?
     @ObservationIgnored private var task: SFSpeechRecognitionTask?
-    @ObservationIgnored private let recognizer = SFSpeechRecognizer()
+    private let recognizer = SFSpeechRecognizer()
     @ObservationIgnored private var silence: DispatchWorkItem?
     @ObservationIgnored private var onDone: ((String) -> Void)?
 

@@ -112,7 +112,7 @@ struct WeekChart: View {
 
     var body: some View {
         let days = lib.lastSevenDays
-        let maxS = max(days.map(\.seconds).max() ?? 1, 1)
+        let maxS = max(days.map { $0.seconds }.max() ?? 1, 1)
         let active = days.filter { $0.seconds > 0 }.count
         VStack(alignment: .leading, spacing: 4) {
             HStack {

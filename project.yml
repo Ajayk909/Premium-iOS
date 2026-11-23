@@ -6,7 +6,7 @@ options:
 packages:
   YouTubeKit:
     url: https://github.com/alexeichhorn/YouTubeKit
-    from: 0.4.0
+    branch: main
 targets:
   Premium:
     type: application
