@@ -60,15 +60,22 @@ struct SubscriptionsView: View {
     }
 
     var body: some View {
-        ScrollView {
+        TopBarPage(title: "Subscriptions") {
             LazyVStack(spacing: 12) {
-                header
                 if lib.d.subscriptions.isEmpty {
                     EmptyState(icon: "play.square.stack", title: "No subscriptions yet",
                                message: "Tap Subscribe on any video or channel and their new uploads show up here.")
                         .padding(.top, 40)
                 } else {
                     channelRow
+                    HStack {
+                        Text("\(model.items.filter { SubsModel.age($0.published) < 86400 }.count) new today")
+                            .font(.system(size: 14, weight: .semibold)).foregroundStyle(t.ink2)
+                        Spacer()
+                        Button("Manage") { manage = true }.font(.system(size: 14, weight: .semibold)).foregroundStyle(t.ink)
+                            .frame(height: 40)
+                    }
+                    .padding(.horizontal, 20)
                     chips
                     if model.loading { LoadingDots() }
                     if filter == "Shorts" {
@@ -88,10 +95,7 @@ struct SubscriptionsView: View {
             }
             .padding(.bottom, 20)
         }
-        .scrollIndicators(.hidden)
         .refreshable { await model.load(force: true) }
-        .screenBackground()
-        .toolbar(.hidden, for: .navigationBar)
         .task(id: lib.d.subscriptions.count) { await model.load() }
         .sheet(isPresented: $manage) { ManageSubs().environment(\.theme, t) }
     }

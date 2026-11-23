@@ -105,9 +105,8 @@ struct HomeView: View {
     var lib = Library.shared
 
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: t.glass ? 14 : 4) {
-                if t.usesGreeting { greetingHeader } else { classicHeader }
+        TopBarPage {
+            LazyVStack(spacing: t.glass ? 10 : 4) {
                 chips
                 if model.loading {
                     LoadingDots()
@@ -122,10 +121,7 @@ struct HomeView: View {
             }
             .padding(.bottom, 20)
         }
-        .scrollIndicators(.hidden)
         .refreshable { await model.refresh() }
-        .screenBackground()
-        .toolbar(.hidden, for: .navigationBar)
         .task { if model.items.isEmpty { await model.refresh() } }
     }
 

@@ -1,5 +1,6 @@
 import SwiftUI
 import AVKit
+import VideoToolbox
 
 /// The watch page: video edge to edge at the top, details below. Settings and comments open
 /// in a panel under the video, so the video always stays visible.
@@ -36,6 +37,14 @@ struct WatchView: View {
         }
     }
 
+    /// Fullscreen turns the phone sideways, like YouTube; leaving it turns it back.
+    private func setFullscreen(_ on: Bool) {
+        withAnimation(Motion.spring) { fullscreen = on }
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: on ? .landscapeRight : .portrait)) { _ in }
+        scene.windows.first?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+    }
+
     private func open(_ newPanel: Panel) {
         withAnimation(Motion.spring) { panel = newPanel }
     }
@@ -56,7 +65,7 @@ struct WatchView: View {
                 if dy > 110 || predicted > 320 {
                     collapse()
                 } else if dy < -70 || predicted < -260 {
-                    withAnimation(Motion.spring) { fullscreen = true }
+                    setFullscreen(true)
                 }
                 drag = 0
             }
@@ -65,20 +74,21 @@ struct WatchView: View {
     private var fullscreenView: some View {
         ZStack(alignment: .trailing) {
             Color.black.ignoresSafeArea()
-            PlayerArea(fullscreen: true, onCollapse: collapse, onSettings: { open(.settings) }, onFullscreen: { withAnimation(Motion.spring) { fullscreen = false } })
+            PlayerArea(fullscreen: true, onCollapse: collapse, onSettings: { open(.settings) }, onFullscreen: { setFullscreen(false) })
                 .ignoresSafeArea()
                 .gesture(
                     DragGesture(minimumDistance: 20)
                         .onEnded { g in
-                            if g.translation.height > 80 { withAnimation(Motion.spring) { fullscreen = false } }
+                            if g.translation.height > 80 { setFullscreen(false) }
                         }
                 )
             if let panel {
                 Color.black.opacity(0.35).ignoresSafeArea()
                     .onTapGesture { withAnimation(Motion.spring) { self.panel = nil } }
                 panelView(panel)
+                    .padding(.top, 16)
                     .frame(width: 400)
-                    .frame(maxHeight: .infinity)
+                    .frame(maxHeight: .infinity, alignment: .top)
                     .modifier(PanelSurface(edges: .all))
                     .padding(.vertical, 10)
                     .padding(.trailing, 10)
@@ -96,7 +106,7 @@ struct WatchView: View {
                     .ignoresSafeArea()
             }
             VStack(spacing: 0) {
-                PlayerArea(fullscreen: false, onCollapse: collapse, onSettings: { open(.settings) }, onFullscreen: { withAnimation(Motion.spring) { fullscreen = true } })
+                PlayerArea(fullscreen: false, onCollapse: collapse, onSettings: { open(.settings) }, onFullscreen: { setFullscreen(true) })
                     .simultaneousGesture(playerGesture)
                 ZStack(alignment: .top) {
                     ScrollView {
@@ -113,7 +123,9 @@ struct WatchView: View {
                         VStack(spacing: 0) {
                             panelHeader(panel)
                             panelView(panel)
+                                .frame(maxHeight: .infinity, alignment: .top)
                         }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         .modifier(PanelSurface(edges: .top))
                         .transition(.move(edge: .bottom))
                         .zIndex(2)
@@ -436,7 +448,7 @@ struct PlayerArea: View {
                 Thumbnail(video: v, radius: 0, large: true).overlay(Color.black.opacity(0.35))
                 Image(systemName: "headphones").font(.system(size: 40, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
             } else {
-                VideoSurface(main: true, gravity: fullscreen && AppSettings.shared.d.fillScreen ? .resizeAspectFill : .resizeAspect)
+                VideoSurface(main: true, gravity: fullscreen && AppSettings.shared.d.zoomToFill ? .resizeAspectFill : .resizeAspect)
             }
             CaptionOverlay(fullscreen: fullscreen, raised: showControls)
             gestureLayer
@@ -461,9 +473,18 @@ struct PlayerArea: View {
                 .padding(20)
             }
         }
-        .aspectRatio(fullscreen ? nil : 16 / 9, contentMode: .fit)
-        .frame(maxWidth: .infinity, maxHeight: fullscreen ? .infinity : nil)
-        .clipped()
+        .modifier(PlayerFrame(fullscreen: fullscreen))
+        .gesture(
+            MagnificationGesture()
+                .onEnded { scale in
+                    guard fullscreen else { return }
+                    let fill = scale > 1
+                    if fill != AppSettings.shared.d.zoomToFill {
+                        AppSettings.shared.set(\.zoomToFill, fill)
+                        p.showToast(fill ? "Zoomed to fill" : "Original size")
+                    }
+                }
+        )
         .onAppear { scheduleHide() }
         .statusBarHidden(fullscreen)
         .persistentSystemOverlays(fullscreen ? .hidden : .automatic)
@@ -555,8 +576,9 @@ struct PlayerArea: View {
                 Spacer(minLength: 0)
                 ScrubberRow(fullscreen: fullscreen, onFullscreen: onFullscreen, keepAwake: scheduleHide)
             }
-            .padding(.horizontal, fullscreen ? 40 : 10)
-            .padding(.vertical, fullscreen ? 20 : 8)
+            .padding(.horizontal, fullscreen ? 22 : 8)
+            .padding(.vertical, fullscreen ? 14 : 6)
+            .ignoresSafeArea(edges: fullscreen ? .all : [])
         }
     }
 
@@ -582,6 +604,18 @@ struct PlayerArea: View {
                 .contentShape(Circle())
         }
         .buttonStyle(PressStyle())
+    }
+}
+
+/// Portrait: a 16:9 box. Fullscreen: the whole screen, whatever is drawn on top.
+private struct PlayerFrame: ViewModifier {
+    var fullscreen: Bool
+    @ViewBuilder func body(content: Content) -> some View {
+        if fullscreen {
+            content.frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+        } else {
+            content.frame(maxWidth: .infinity).aspectRatio(16 / 9, contentMode: .fit).clipped()
+        }
     }
 }
 
@@ -796,9 +830,12 @@ struct PlayerSettingsPanel: View {
     var settings = AppSettings.shared
 
     private var qualityNote: String {
-        let now = p.playingQuality.map { "Playing \($0.label)\($0.av1 ? " · AV1" : "")" } ?? (p.audioOnly ? "Audio only" : "Auto")
-        let top = p.qualities.first.map { $0.label } ?? "—"
-        return "\(now) · best on this iPhone: \(top)"
+        var s = p.playingQuality.map { "Playing \($0.label)" } ?? (p.audioOnly ? "Audio only" : "Auto")
+        if let top = p.qualities.first { s += " · best for this video: \(top.label)" }
+        if (p.qualities.first?.height ?? 0) < 2160 && !VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1) {
+            s += " · 4K/8K need an iPhone 15 Pro or newer"
+        }
+        return s
     }
 
     private var sleepLabel: String {
@@ -838,7 +875,7 @@ struct PlayerSettingsPanel: View {
                     SliderRow(title: "Strength", valueLabel: "\(Int(settings.d.ambientStrength * 100))%", value: settings.binding(\.ambientStrength))
                 }
                 RowDivider(inset: 58)
-                ToggleRow(icon: "arrow.up.left.and.arrow.down.right", title: "Fill screen in fullscreen", note: "Uses the whole display, around the camera too", isOn: settings.binding(\.fillScreen))
+                ToggleRow(icon: "arrow.up.left.and.arrow.down.right", title: "Fill screen in fullscreen", note: "Uses the whole display, around the camera too", isOn: settings.binding(\.zoomToFill))
             }
             RowGroup(title: "More") {
                 NavRow(icon: "lock", title: "Lock screen", note: "Ignore touches while you watch", chevron: false) {

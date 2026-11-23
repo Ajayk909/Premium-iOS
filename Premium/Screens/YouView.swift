@@ -5,11 +5,10 @@ struct YouView: View {
     var lib = Library.shared
 
     var body: some View {
-        ScrollView {
+        TopBarPage(title: "You") {
             VStack(spacing: 18) {
                 header
-                RowGroup(title: "Google account") { AccountCard() }
-                weekCard
+                if !GoogleAccount.shared.signedIn { RowGroup(title: nil) { AccountCard() } }
                 if !lib.d.history.isEmpty {
                     VStack(spacing: 10) {
                         SectionHeader(title: "History", action: "See all") { AppState.shared.push(.list(.history)) }
@@ -53,9 +52,6 @@ struct YouView: View {
             }
             .padding(.bottom, 20)
         }
-        .scrollIndicators(.hidden)
-        .screenBackground()
-        .toolbar(.hidden, for: .navigationBar)
     }
 
     private var header: some View {
@@ -72,7 +68,7 @@ struct YouView: View {
                 Text("\(lib.d.subscriptions.count) subscriptions · \(lib.d.history.count) watched")
                     .font(.system(size: 13)).foregroundStyle(t.ink2)
             }
-            Spacer(minLength: 104)
+            Spacer()
         }
         .padding(.horizontal, 20)
         .padding(.top, 8)

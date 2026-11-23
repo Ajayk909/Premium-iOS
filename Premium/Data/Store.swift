@@ -286,6 +286,8 @@ struct SettingsData: Codable {
     var rokuName: String? = nil
     var ambientStrength: Double = 0.65
     var fillScreen = false
+    /// Fullscreen fills the whole display (pinch to switch). On by default, like YouTube's zoom.
+    var zoomToFill = true
     var maxLengthMinutes = 0
     var blockedChannels: [Channel] = []
     var captionLanguage: String? = nil
@@ -311,6 +313,7 @@ struct SettingsData: Codable {
         rokuName = try? c.decode(String.self, forKey: .rokuName)
         ambientStrength = (try? c.decode(Double.self, forKey: .ambientStrength)) ?? d.ambientStrength
         fillScreen = (try? c.decode(Bool.self, forKey: .fillScreen)) ?? d.fillScreen
+        zoomToFill = (try? c.decode(Bool.self, forKey: .zoomToFill)) ?? d.zoomToFill
         maxLengthMinutes = (try? c.decode(Int.self, forKey: .maxLengthMinutes)) ?? d.maxLengthMinutes
         blockedChannels = (try? c.decode([Channel].self, forKey: .blockedChannels)) ?? d.blockedChannels
         captionLanguage = try? c.decode(String.self, forKey: .captionLanguage)

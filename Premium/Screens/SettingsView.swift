@@ -45,7 +45,7 @@ struct SettingsView: View {
                 RowGroup(title: "Playback") {
                     ToggleRow(icon: "forward.end", title: "Autoplay next video", isOn: settings.binding(\.autoplay))
                     RowDivider(inset: 58)
-                    ToggleRow(icon: "arrow.up.left.and.arrow.down.right", title: "Fill screen in fullscreen", note: "Uses the whole display, around the camera too", isOn: settings.binding(\.fillScreen))
+                    ToggleRow(icon: "arrow.up.left.and.arrow.down.right", title: "Fill screen in fullscreen", note: "Uses the whole display, around the camera too", isOn: settings.binding(\.zoomToFill))
                     RowDivider(inset: 58)
                     ToggleRow(icon: "dollarsign.circle", title: "Skip sponsors", note: "Auto-skips sponsor segments with SponsorBlock", isOn: settings.skipGroup(["sponsor"]))
                     RowDivider(inset: 58)
@@ -198,9 +198,7 @@ struct AccountCard: View {
                 ToggleRow(icon: "arrow.triangle.2.circlepath", title: "Stay in sync", note: "Picks up new subscriptions once a day", isOn: settings.binding(\.syncOnLaunch))
             } else {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Bring your YouTube with you").font(.system(size: 16, weight: .semibold)).foregroundStyle(t.ink)
-                    Text("Sign in to import your subscriptions, playlists and liked videos. You stay signed in on this iPhone until you sign out. Premium only reads your account — it never posts or changes anything.")
-                        .font(.system(size: 13)).foregroundStyle(t.ink2)
+                    Text("Sign in to bring your subscriptions and playlists").font(.system(size: 15, weight: .semibold)).foregroundStyle(t.ink)
                     Button { Task { await account.signIn() } } label: {
                         HStack(spacing: 8) {
                             if account.busy { ProgressView().tint(t.onAccent) } else { Image(systemName: "person.crop.circle.badge.checkmark") }

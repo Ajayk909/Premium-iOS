@@ -3,6 +3,7 @@ import AVKit
 import CoreImage
 import MediaPlayer
 import Observation
+import YouTubeKit
 
 /// One player for the whole app: the watch page, the mini player, Picture in Picture,
 /// the lock screen and background audio all share it.
@@ -87,6 +88,7 @@ final class PlayerModel: NSObject {
         qualities = []
         playingQuality = nil
         streamSet = nil
+        hlsURL = nil
         captionTrack = nil
         captionText = nil
         cues = []
@@ -118,26 +120,30 @@ final class PlayerModel: NSObject {
             Task { @MainActor in await self.loadExtras(v, cats: cats) }
             do {
                 var item: AVPlayerItem?
-                let set = try await Streams.load(v.id)
-                guard !Task.isCancelled, self.current?.id == v.id else { return }
-                self.streamSet = set
-                if let h = set.hls, !audioOnly {
-                    // HLS: adaptive quality with sound, every resolution YouTube offers.
+                let yt = YouTube(videoID: v.id, methods: [.local, .remote])
+                // 1. Start with HLS as soon as it's ready (fast). 2. Look up the HD streams in the background.
+                if !audioOnly, let h = await Streams.quickHLS(yt) {
+                    guard !Task.isCancelled, self.current?.id == v.id else { return }
                     let it = AVPlayerItem(url: h)
-                    if let cap { it.preferredMaximumResolution = CGSize(width: cap * 16 / 9 + 2, height: cap + 2) }
-                    else if autoCap < 1080 { it.preferredMaximumResolution = CGSize(width: autoCap * 16 / 9 + 2, height: autoCap + 2) }
+                    let limit = cap ?? (autoCap < 1080 ? autoCap : nil)
+                    if let limit { it.preferredMaximumResolution = CGSize(width: limit * 16 / 9 + 2, height: limit + 2) }
                     item = it
                     self.isHLS = true
+                    self.hlsURL = h
                     self.playingQuality = nil
-                    Task { @MainActor in
-                        let q = await Streams.hlsVariants(h)
-                        if self.current?.id == v.id { self.qualities = q }
+                    Task { @MainActor in await self.loadQualities(yt, hls: h, for: v.id) }
+                } else {
+                    let set = try await Streams.load(yt, hls: nil)
+                    guard !Task.isCancelled, self.current?.id == v.id else { return }
+                    self.streamSet = set
+                    self.hlsURL = set.hls
+                    let choice = Streams.choose(set, height: cap, autoCap: autoCap)
+                    if let it = try? await Streams.item(set, choice: choice, audioOnly: audioOnly) {
+                        item = it
+                        self.isHLS = false
+                        self.qualities = set.videos
+                        self.playingQuality = audioOnly ? nil : choice
                     }
-                } else if let it = try? await Streams.item(set, choice: Streams.choose(set, height: cap, autoCap: autoCap), audioOnly: audioOnly) {
-                    item = it
-                    self.isHLS = false
-                    self.qualities = set.videos
-                    self.playingQuality = audioOnly ? nil : Streams.choose(set, height: cap, autoCap: autoCap)
                 }
                 guard let item else { throw YTError.noStream }
                 guard !Task.isCancelled, self.current?.id == v.id else { return }
@@ -231,61 +237,83 @@ final class PlayerModel: NSObject {
         player.replaceCurrentItem(with: item)
     }
 
-    /// Switch quality (or audio-only) using the streams we already have, keeping your place.
-    private func switchStreams() {
-        guard let set = streamSet, let v = current else { reload(); return }
+    @ObservationIgnored private var hlsURL: URL?
+
+    /// Builds the quality list: everything in the HLS feed (with real frame rates) plus any
+    /// higher HD streams (4K/8K AV1) this iPhone can decode.
+    @MainActor
+    private func loadQualities(_ yt: YouTube, hls: URL, for id: String) async {
+        let fromHLS = await Streams.hlsVariants(hls)
+        if current?.id == id { qualities = merge(fromHLS, []) }
+        if let set = try? await Streams.load(yt, hls: hls), current?.id == id {
+            streamSet = set
+            qualities = merge(fromHLS, set.videos)
+        }
+    }
+
+    private func merge(_ hls: [VideoChoice], _ adaptive: [VideoChoice]) -> [VideoChoice] {
+        var byHeight: [Int: VideoChoice] = [:]
+        for c in adaptive { byHeight[c.height] = c }
+        for c in hls {
+            if let a = byHeight[c.height], a.hfr && !c.hfr { continue }
+            byHeight[c.height] = c
+        }
+        return byHeight.values.sorted { $0.height > $1.height }
+    }
+
+    /// Switch quality (or audio-only), keeping your place.
+    private func switchStreams(to choice: VideoChoice? = nil) {
+        guard let v = current else { return }
         let at = time
         let wasPlaying = isPlaying || loading
-        let autoCap = AppSettings.shared.d.dataSaver ? 480 : 1080
-        let choice = Streams.choose(set, height: qualityCap, autoCap: autoCap)
         loading = true
         loadTask?.cancel()
         loadTask = Task { @MainActor in
             do {
-                let item = try await Streams.item(set, choice: choice, audioOnly: self.audioOnly)
+                let item: AVPlayerItem
+                var playing: VideoChoice? = nil
+                if !self.audioOnly, let h = self.hlsURL, choice == nil || choice?.fromHLS == true {
+                    item = AVPlayerItem(url: h)
+                    if let c = choice { item.preferredMaximumResolution = CGSize(width: c.height * 16 / 9 + 2, height: c.height + 2) }
+                    self.isHLS = true
+                    playing = choice
+                } else {
+                    guard let set = self.streamSet else { self.showToast("Still loading HD streams — try again in a moment"); self.loading = false; return }
+                    let pick = choice ?? Streams.choose(set, height: self.qualityCap, autoCap: AppSettings.shared.d.dataSaver ? 480 : 1080)
+                    item = try await Streams.item(set, choice: pick, audioOnly: self.audioOnly)
+                    self.isHLS = false
+                    playing = self.audioOnly ? nil : pick
+                }
                 guard !Task.isCancelled, self.current?.id == v.id else { return }
                 self.attach(item)
-                self.playingQuality = self.audioOnly ? nil : choice
+                self.playingQuality = playing
                 await self.player.seek(to: CMTime(seconds: at, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
                 if wasPlaying { self.player.playImmediately(atRate: self.speed) }
             } catch {
-                self.reload()
+                self.showToast("That quality couldn't be played")
             }
             self.loading = false
         }
     }
 
     private func fallBackToHLS() {
-        guard !isHLS, let v = current else { return }
-        let at = time
-        isHLS = true
-        loading = true
-        let failure = player.currentItem?.error.map { String(describing: $0) } ?? ""
-        Task { @MainActor in
-            let hlsURL: URL? = self.streamSet?.hls
-            let fallback: AVPlayerItem? = hlsURL.map { AVPlayerItem(url: $0) }
-            if let item = fallback, self.current?.id == v.id {
-                self.qualities = []
-                self.playingQuality = nil
-                self.attach(item)
-                if at > 1 { await self.player.seek(to: CMTime(seconds: at, preferredTimescale: 600)) }
-                self.player.playImmediately(atRate: self.speed)
-                self.error = nil
-            } else {
-                self.error = "This video couldn't be played right now.\n" + failure.prefix(160)
-            }
-            self.loading = false
-        }
+        guard !isHLS, hlsURL != nil else { return }
+        showToast("Switched to Auto quality")
+        qualityCap = nil
+        switchStreams(to: nil)
     }
 
     func setQuality(_ height: Int?) {
         qualityCap = height
-        if isHLS, let item = player.currentItem {
-            item.preferredMaximumResolution = height.map { CGSize(width: $0 * 16 / 9 + 2, height: $0 + 2) } ?? .zero
+        let target = height.flatMap { h in qualities.first { $0.height == h } }
+        if isHLS, target == nil || target?.fromHLS == true, let item = player.currentItem {
+            // Same HLS stream: just change the limit, no reload.
+            item.preferredMaximumResolution = target.map { CGSize(width: $0.height * 16 / 9 + 2, height: $0.height + 2) } ?? .zero
+            playingQuality = target
         } else {
-            switchStreams()
+            switchStreams(to: target)
         }
-        showToast(height.map { h in "Quality: \(qualities.first { $0.height == h }?.label ?? "\(h)p")" } ?? "Quality: Auto")
+        showToast(target.map { "Quality: \($0.label)" } ?? "Quality: Auto")
     }
 
     func selectCaption(_ track: CaptionTrack?, remember: Bool = true) {

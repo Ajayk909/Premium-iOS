@@ -53,6 +53,8 @@ struct VideoChoice: Identifiable, Hashable {
     var hfr: Bool
     var av1: Bool
     var url: URL
+    /// From YouTube's HLS feed (switches instantly) rather than the separate HD streams.
+    var fromHLS = false
     var id: Int { height }
 
     var label: String {
@@ -100,7 +102,7 @@ enum Streams {
             let codecs = l.range(of: #"CODECS="[^"]*""#, options: .regularExpression).map { String(l[$0]) } ?? ""
             if codecs.contains("vp09") && !VTIsHardwareDecodeSupported(kCMVideoCodecType_VP9) { continue }
             if codecs.contains("av01") && !VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1) { continue }
-            let choice = VideoChoice(height: h, hfr: fps > 31, av1: codecs.contains("av01"), url: url)
+            let choice = VideoChoice(height: h, hfr: fps > 31, av1: codecs.contains("av01"), url: url, fromHLS: true)
             if let cur = best[h], cur.hfr && !choice.hfr { continue }
             best[h] = choice
         }
@@ -108,9 +110,18 @@ enum Streams {
     }
 
     static func load(_ id: String) async throws -> StreamSet {
-        let yt = YouTube(videoID: id, methods: [.local, .remote])
+        try await load(YouTube(videoID: id, methods: [.local, .remote]), hls: nil)
+    }
+
+    /// Fast path: YouTube's HLS feed is usually ready first, so playback can start right away.
+    static func quickHLS(_ yt: YouTube) async -> URL? {
+        try? await yt.livestreams.first?.url
+    }
+
+    /// The separate HD streams (for 4K/8K and exact quality picks). Slower, so it runs in the background.
+    static func load(_ yt: YouTube, hls known: URL?) async throws -> StreamSet {
         let streams = try await yt.streams
-        let hls = try? await yt.livestreams.first?.url
+        let hls = known ?? (try? await yt.livestreams.first?.url)
         var best: [Int: (choice: VideoChoice, score: Int)] = [:]
         for s in streams.filterVideoOnly() where s.isNativelyPlayable && s.fileExtension == .mp4 {
             guard let h = s.videoResolution else { continue }
@@ -170,8 +181,9 @@ enum Streams {
 
     /// Simple single-item helper used by Shorts.
     static func item(for id: String, audioOnly: Bool, maxHeight: Int) async throws -> AVPlayerItem {
-        let set = try await load(id)
-        if !audioOnly, let h = set.hls { return AVPlayerItem(url: h) }
+        let yt = YouTube(videoID: id, methods: [.local, .remote])
+        if !audioOnly, let h = await quickHLS(yt) { return AVPlayerItem(url: h) }
+        let set = try await load(yt, hls: nil)
         return try await item(set, choice: choose(set, height: nil, autoCap: maxHeight), audioOnly: audioOnly)
     }
 
