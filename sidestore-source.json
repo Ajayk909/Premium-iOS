@@ -1,0 +1,40 @@
+{
+  "name": "Premium",
+  "identifier": "com.ajayk909.premium.source",
+  "subtitle": "AJ's ad-free YouTube app",
+  "sourceURL": "https://raw.githubusercontent.com/Ajayk909/Premium-iOS/main/sidestore-source.json",
+  "iconURL": "https://raw.githubusercontent.com/Ajayk909/Premium-iOS/main/Premium/Assets.xcassets/AppIcon.appiconset/icon-1024.png",
+  "tintColor": "#1C1D24",
+  "apps": [
+    {
+      "name": "Premium",
+      "bundleIdentifier": "com.ajayk909.premium",
+      "developerName": "AJ",
+      "subtitle": "Ad-free YouTube with Pearl Glass",
+      "localizedDescription": "Personal, open-source, ad-free YouTube client.",
+      "iconURL": "https://raw.githubusercontent.com/Ajayk909/Premium-iOS/main/Premium/Assets.xcassets/AppIcon.appiconset/icon-1024.png",
+      "tintColor": "#1C1D24",
+      "category": "entertainment",
+      "versions": [
+        {
+          "version": "0.5.18",
+          "buildVersion": "18",
+          "date": "2026-11-25T23:33:54Z",
+          "localizedDescription": "Build 18",
+          "downloadURL": "https://github.com/Ajayk909/Premium-iOS/releases/download/build-18/Premium-unsigned.ipa",
+          "size": 2074317,
+          "minOSVersion": "17.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {
+          "NSMicrophoneUsageDescription": "Voice search",
+          "NSSpeechRecognitionUsageDescription": "Voice search",
+          "NSLocalNetworkUsageDescription": "Find your Roku TV"
+        }
+      }
+    }
+  ],
+  "news": []
+}
