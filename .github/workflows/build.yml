@@ -8,65 +8,54 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: build
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: macos-15
-    env:
-      APPETIZE_TOKEN: ${{ secrets.APPETIZE_TOKEN }}
-      APPETIZE_APP: ${{ secrets.APPETIZE_APP }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Version numbers
+        run: |
+          echo "BUILD=${{ github.run_number }}" >> $GITHUB_ENV
+          echo "VERSION=0.5.${{ github.run_number }}" >> $GITHUB_ENV
 
       - name: Generate Xcode project
         run: |
           brew install xcodegen
           xcodegen generate
 
-      - name: Build for the iOS Simulator (Appetize)
-        run: |
-          set -o pipefail
-          xcodebuild -project Premium.xcodeproj -scheme Premium -configuration Release \
-            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
-            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee sim.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || (grep -E "error:" sim.log | head -60; exit 1)
-          cd build/Build/Products/Release-iphonesimulator && zip -qr "$GITHUB_WORKSPACE/Premium-simulator.zip" Premium.app
-
-      - name: Build for iPhone (unsigned .ipa for sideloading)
+      - name: Build for iPhone (unsigned .ipa — SideStore / Sideloadly sign it)
         run: |
           set -o pipefail
           xcodebuild -project Premium.xcodeproj -scheme Premium -configuration Release \
             -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build-device \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build 2>&1 | tee device.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)"
+            MARKETING_VERSION=$VERSION CURRENT_PROJECT_VERSION=$BUILD \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build 2>&1 | tee device.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || (grep -E "error:" device.log | head -60; exit 1)
           mkdir -p Payload && cp -R build-device/Build/Products/Release-iphoneos/Premium.app Payload/
           zip -qr Premium-unsigned.ipa Payload
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Premium-simulator
-          path: Premium-simulator.zip
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Premium-unsigned-ipa
-          path: Premium-unsigned.ipa
-
-      - name: Publish a download page (GitHub Release)
+      - name: Publish the download (GitHub Release)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: Premium for iPhone — build ${{ github.run_number }}
+          name: Premium ${{ env.VERSION }}
           body: |
-            **Premium-simulator.zip** — upload to appetize.io to run it in your browser.
-            **Premium-unsigned.ipa** — sideload onto an iPhone with AltStore or Sideloadly.
-            Built from ${{ github.sha }}.
+            **Premium-unsigned.ipa** — install with SideStore (auto-updates) or Sideloadly.
+            SideStore source: https://raw.githubusercontent.com/Ajayk909/Premium-iOS/main/sidestore-source.json
           make_latest: true
-          files: |
-            Premium-simulator.zip
-            Premium-unsigned.ipa
+          files: Premium-unsigned.ipa
 
-      - name: Upload to Appetize (if a token is set)
-        if: env.APPETIZE_TOKEN != ''
+      - name: Update the SideStore source
         run: |
-          URL="https://api.appetize.io/v1/apps"
-          [ -n "$APPETIZE_APP" ] && URL="$URL/$APPETIZE_APP"
-          curl -sS -X POST "$URL" -H "X-API-KEY: $APPETIZE_TOKEN" -F "file=@Premium-simulator.zip" -F "platform=ios" | tee appetize.json
+          SIZE=$(stat -f%z Premium-unsigned.ipa)
+          git pull --rebase origin main
+          python3 scripts/make_source.py "$VERSION" "$BUILD" "$SIZE"
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add sidestore-source.json
+          git commit -m "SideStore source: $VERSION [skip ci]" || exit 0
+          git push origin HEAD:main
